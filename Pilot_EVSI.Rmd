@@ -1,0 +1,413 @@
+---
+title: "Pilot EVSI"
+author: "Duncan T. Wilson"
+date: "06/09/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(DiceKriging)
+```
+
+## Introduction
+
+In `opt_pilot_ocs` we looked at optimising a joint programme of pilot and definitive trials, where the design and analysis of each was based around a hypothesis test. As an optimality criterion, we used Bayesain statistical decision theory - i.e. we defined a utility function, a prior, and found the programme which maximised expected utility.
+
+Here, we will consider a Bayesian decision-theoretic analysis of the pilot trial but retain a hypothesis test in the definitive. That is, after observing the pilot data we will calculate the posterior and then design the confirmatory trial to maximise extecped utility with respect to that posterior.
+
+Denote the pilot data by $x_1$, definitive data $x_2$, and unknown parameter $\theta$. We have some utility function which depends on $\theta$, the result of the definitive trial $c(x_2)$, and its sample size $n_2$. Denote this $u(\theta, n_2, c(x_2))$.
+
+After observing $x_1$, we choose $n_2$ to maximise expected utility w.r.t. the posterior of $\theta$;
+$$
+\max_{n_2} E_{\theta, x_2 | x_1} [u(\theta, n_2, c(x_2))].
+$$
+Prior to the pilot when $x_1$ is unknown, the expected utility of some pilot design will then be
+$$
+E_{x_1} \left[ \max_{n_2} E_{\theta, x_2 | x_1} [u(\theta, n_2, c(x_2))] \right]
+$$
+To optimise the pilot, we want to calculate this for different pilot sample sizes and choose the maximiser. But, this is difficult to calculate. A naive nested Monte Carlo scheme could be used: we simulate many sets of pilot data, and for each of these simulate from the posterior through MCMC, then use these posteriors to find the optimal definitive design, thus obtaining a utility for each simulated pilot data set which can then be averaged. But this is computationaly expensive.
+
+An alternative view notes that the optimal definitive sample size is a function of the pilot data, which can itself be summarised through one or several sufficient statistics. Consider a space of such functions $n_2(x_1): \mathcal{X} \rightarrow \mathbf{N}$. Then,
+$$
+E_{x_1} \left[ \max_{n_2} E_{\theta, x_2 | x_1} [u(\theta, n_2, c(x_2))] \right] \geq 
+E_{x_1} \left[ E_{\theta, x_2 | x_1} [u(\theta, n_2(x_1), c(x_2))] \right] ~ \forall ~ n_2(x_1).
+$$
+We can re-write the right hand term:
+$$
+\begin{aligned}
+E_{x_1} \left[ E_{\theta, x_2 | x_1} [u(\theta, n_2(x_1), c(x_2))] \right] &= 
+E_{x_1, x_2, \theta} \left[ u(\theta, n_2(x_1), c(x_2)) \right] \\
+&=  E_{x_1, \theta} \left[ E_{x_2 | x_1, \theta} [u(\theta, n_2(x_1), c(x_2))] \right]
+\end{aligned}
+$$
+So, we can calculate the expected utility when using a decision rule $n_2(x_1)$ by simulating from the joint distribution of $(\theta, x_1)$ and then for each draw calculating the expected utility conditional on these and then averaging. Calculating the conditional utility will be fast prioviding we have an analytic expression for the conditional power function of the definitive trial. 
+
+The above inequality then suggests that a lower bound of the expected utility of the full programme can be searched for by maximising * over the space of functions $n_2(x_1)$. Starting with the simplest case where $x_1$ has one dimension, we use Gaussian proccesses to provide a flexible soace of functions defined by a set of "support points" and hyperparameters.
+
+## Example
+
+We extend the example used in `opt_pilot_ocs`, where we have a single continuous normal effectiveness endpoint with known variance but unknown true mean difference, and have a utlity that includes change in effectiveness, sampling costs, and treatment / implementation costs. Initialising parameters:
+
+```{r}
+get_ks <- function(d_bar, d_hat, n)
+{
+  k_d <- 1/(1 + d_hat - d_bar/n)
+  k_n <- -k_d*d_bar/n
+  k_c <- 1 - k_d - k_n
+  
+  return(c(k_d, k_n, k_c))
+}
+
+k <- get_ks(0.01, 0.2, 50)
+rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
+np <- 30
+```
+
+We start by simulating from $(\theta, x_1)$:
+
+```{r}
+ms <- rnorm(100000, mu_0, sd_0)
+xs <- rnorm(100000, ms, sqrt(2*sig*sig/np))
+```
+
+Then, we need a function for expected utility of the definitive trial conditional on $\theta$ and on $x_1$, where the latter is felt through the resulting choice of sample size $n_2(x_1)$. Note this is vectorised to ensure fast computations later.
+
+```{r}
+get_u_cond <- function(ms, ns, np, k, rho, sig)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  
+  # Make sure the sample size is > 2
+  ns <- sapply(ns, max, 2)
+  # Calculate the critical value to give alpha = 0.025
+  ds <- qnorm(1-0.025)*sqrt(2*sig*sig/ns)
+  # Get resulting power
+  pows <- 1-pnorm(ds, ms, sqrt(2*sig^2/ns))
+  
+  pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+}
+```
+
+Now, we estimate overall expected utility:
+
+```{r}
+get_ns <- function(z, xs)
+{
+  # Fix the x loaction of the supports
+  des <- seq(-2,2,l=(length(z)-3))
+  # y value of the supports is what we search over...
+  y <- z[1:(length(z)-3)]
+  # Plus the trend, variance and covariance GP hyperparameters
+  try(fit <- km(~1, data.frame(x=des), response=y, coef.trend=z[(length(z)-2)], coef.cov = z[(length(z)-1)], coef.var = z[(length(z))]))
+  
+  # For the GP decision rule, get the definitive n_2s from each simulated x_1
+  predict(fit, newdata=data.frame(x=xs), type="SK",
+                            se.compute=F, light.return=T,
+                            checkNames=F)$mean
+}
+
+get_u_mc <- function(z, ms, xs, np, k, rho, sig)
+{
+  ns <- get_ns(z, xs)
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(ms, ns, np, k, rho, sig))
+  u
+}
+
+
+ptm <- proc.time()
+r <- replicate(100,predict(fit, newdata=data.frame(x=xs), type="SK",
+                            se.compute=F, light.return=F,
+                            checkNames=F)$mean)
+proc.time() - ptm
+```
+
+Finally, we can optimise:
+
+```{r}
+ptm <- proc.time()
+opt <- optim(c(seq(10,80,l=10),0,2,1), get_u_mc, ms=ms[1:10000], xs=xs[1:10000], np=np, k=k, rho=rho, sig=sig,
+      lower = c(rep(0,10),0,1,1),
+      upper = c(rep(200,10),100,10,10),
+      control=list(maxit=1000))#, factr=1e7))
+proc.time() - ptm
+
+ptm <- proc.time()
+x <- c(seq(10,80,l=5),0,2,1)
+opt2 <- nloptr(x, get_u_mc,
+                lb = c(rep(0,5),0,1,1), ub= c(rep(200,5),100,10,10),
+                opt = list("algorithm"="NLOPT_LN_SBPLX",
+                           "ftol_rel"=1.0e-6,
+                           "maxeval"=1000),
+                ms=ms[1:10000], xs=xs[1:10000], np=np, k=k, rho=rho, sig=sig)
+x <- opt2$solution
+proc.time() - ptm
+```
+
+Plotting the resulting decision rule:
+
+```{r}
+plot(xs, get_ns(opt2$solution, xs))
+```
+
+For comparison, we can find the optimal decision rule since, in this case, we have a conjugate prior and can analytically calculate the expected utility of the definitive trial w.r.t. the posterior. So, for each pilot data sample we can get the posterior of $\theta$ and then find the optimal definitive trial design.
+
+```{r}
+exp_u <- function(x, k, rho, mu_0, sd_0, sig)
+{
+  n <- x[1]
+  d <- qnorm(1-0.025)*sqrt(2*sig*sig/n)
+  k_d <- k[1]; k_n <- k[2]; k_c <- k[3]
+  
+  sd_1 <- sqrt(1/(1/sd_0^2 + n/(2*sig^2)))
+  t <- -rho*k_d
+  sig_x <- sqrt(sd_0^2 + 2*sig^2/n)
+  r <- (t * sd_1^2 *n)/(2*sig^2)
+  
+  -( (1 - pnorm((d-mu_0)/sig_x)) * (1 - exp(-rho*k_n*n *
+                                   exp(sd_1^2 *t*t/2) *
+                                   exp(t*sd_1^2 *mu_0/sd_0^2) *
+                                   exp(mu_0*r + (sig_x^2*r*r/2)) *
+                                   ((1-pnorm((d-mu_0)/sig_x - sig_x*r))/(1-pnorm((d-mu_0)/sig_x)))) +
+    pnorm((d-mu_0)/sig_x) * (1 - exp(-rho*(k_n*n + k_c))) ))
+}
+
+# Get the posterior variance
+var_1 <- 1/( 1/(sd_0^2) + np/(2*sig^2) )
+# Get posterior means corresponding to each pilot data sample
+pms <- var_1*(mu_0/(sd_0^2) + np*xs/(2*sig^2))
+
+ns2 <- NULL
+for(m in pms){
+  suppressWarnings( n <- optim(10, exp_u, k=k, rho=rho, mu_0=m, sd_0=sqrt(var_1), sig=sig, method="Brent",
+             lower=2, upper=600)$par )
+  ns2 <- c(ns2, n)
+}
+```
+
+Compare the two decision rules (optimal in red):
+```{r}
+ns <- get_ns(opt$par, xs)
+
+# Utilities
+us <- get_u_cond(ms, ns, np, k, rho, sig); us2 <- get_u_cond(ms, ns2, np, k, rho, sig)
+mean(us); mean(us2)
+
+# Plot decision rules
+plot(xs, ns)
+points(xs, ns2, col="red")
+```
+
+In this case, the estimated expected utility is very close to the limit. Translating the difference back to units of sample size gives a difference of:
+
+```{r}
+(log(1-0.3622409) - log(1-0.3622511))/(2*k)
+```
+
+NOTE: In the above we estimate an expectation over the joint distribution of $\theta, x_1$ using MC. But in this case, where the joint distribution is bivariate normal, we could use an analytic method instead e.g. Gauss Hermite quadrature. For more complex versions, e.g. with unknown variance, could still use e.g. cubature - at some point, MC will be faster. All numerical integration methods involve a weighted sum of evaluations at a number of points - so just need this number to be less than the MC samples.
+
+```{r}
+## perform quadrature of multivariate normal
+
+## compute multivariate Gaussian quadrature points
+## n     - number of points each dimension before pruning
+## mu    - mean vector
+## sigma - covariance matrix
+## prune - NULL - no pruning; [0-1] - fraction to prune
+mgauss.hermite <- function(n, mu, sigma, prune=NULL) {
+  if(!all(dim(sigma) == length(mu)))
+    stop("mu and sigma have nonconformable dimensions")
+  
+  dm  <- length(mu)
+  #gh  <- gauss.hermite(n)
+  ghd <- gaussHermiteData(n)
+  ghd$x <- ghd$x*sqrt(2); ghd$w <- ghd$w/sqrt(pi)
+  gh <- matrix(c(ghd$x, ghd$w), ncol=2)
+  #idx grows exponentially in n and dm
+  idx <- as.matrix(expand.grid(rep(list(1:n),dm)))
+  pts <- matrix(gh[idx,1],nrow(idx),dm)
+  wts <- apply(matrix(gh[idx,2],nrow(idx),dm), 1, prod)
+  
+  ## prune
+  if(!is.null(prune)) {
+    qwt <- quantile(wts, probs=prune)
+    pts <- pts[wts > qwt,]
+    wts <- wts[wts > qwt]
+  }
+  
+  ## rotate, scale, translate points
+  eig <- eigen(sigma) 
+  rot <- eig$vectors %*% diag(sqrt(eig$values))
+  pts <- t(rot %*% t(pts) + mu)
+  return(list(points=pts, weights=wts))
+}
+```
+
+$$
+E_{\theta,x}[\theta x] = E_\theta[E_{\theta x | \theta} (\theta x)] \\
+= E_\theta [ \theta E_{x | \theta} (x)] \\
+= E_\theta [\theta^2] \\
+= Var(\theta) + (E[\theta])^2 \\
+= s_0^2 + \mu_0^2
+$$
+$$
+Cov(\theta, x) = E[\theta x] - E[\theta]E[x] \\
+= s_0^2 + \mu_0^2 - \mu_0^2 \\
+= s_0^2
+$$
+
+```{r}
+get_u_int <- function(z, pts, np, k, rho, sig)
+{
+  ns <- get_ns(z, pts$points[,2])
+  u <- -sum(get_u_cond(pts$points[,1], ns, np, k, rho, sig)*pts$weights)
+  u
+}
+```
+
+```{r}
+cov_mat <- matrix(c(sd_0^2, sd_0^2, sd_0^2, sd_0^2 + 2*sig^2/np),2,2)
+pts <- mgauss.hermite(100, mu=c(mu_0,mu_0), sigma=cov_mat, prune=0.9)
+
+plot(pts$points, cex=-5/log(pts$weights), pch=19,
+  xlab=expression(x[1]),
+  ylab=expression(x[2]))
+
+ptm <- proc.time()
+opt <- optim(c(seq(10,80,l=10),0,2,1), get_u_int, pts=pts, np=np, k=k, rho=rho, sig=sig,
+      lower = c(rep(0,10),0,1,1),
+      upper = c(rep(200,10),100,10,10),
+      control=list(maxit=1000))#, factr=1e7))
+proc.time() - ptm
+```
+
+## Optimal pilot sample size
+
+In the above we have approximated expected utility for a given pilot sample size. We could do this for a range of options to find the optimal pilot $n_p$; or we could build it into the existing optimisation problem.
+
+Specifically, when we simulate our pilot data we can, for each $\theta^{(i)}$, simulate a series of pilot statistics formed by increasing the sample size. That is, we generate pilot data up to some maximum sample size and compute the statistics formed from the first $n_p$ elements, where $n_p = 0, 1, \ldots $. Storing these stats in a matrix rather than a single vector, we can pass the column index of this matrix as an argument to the optimisation algorithm.
+
+First, simulate the data;
+```{r}
+M <- 10^5
+ms <- rnorm(M, mu_0, sd_0)
+xs <- matrix(rnorm(M, ms, sqrt(2*sig^2)), ncol=1)
+for(i in 2:50){
+  xs <- cbind(xs, ((i-1)*xs[,i-1] + rnorm(M, ms, sqrt(2*sig^2)))/i)
+}
+```
+
+Now modify our objective to allow for optimisng over $n_p$:
+
+```{r}
+get_u_mc_np <- function(z, ms, xs, k, rho, sig)
+{
+  np <- z[14]
+  
+  # Since np is continuous, we use a weighted combination of the xs at its floor
+  # and ceiling as an appriximation and to enable optimisation
+  w <- np - floor(np)
+  x <- (1-w)*xs[,floor(np)] + w*xs[,ceiling(np)]
+  
+  ns <- get_ns(z[1:13], x)
+  
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(ms, ns, np, k, rho, sig))
+  u
+}
+```
+
+Finally, we can optimise:
+
+```{r}
+ptm <- proc.time()
+opt <- optim(c(seq(10,80,l=10),0,2,1,30), get_u_mc_np, ms=ms, xs=xs, k=k, rho=rho, sig=sig,
+      lower = c(rep(0,10),0,1,1,1),
+      upper = c(rep(200,10),100,10,10,50),
+      control=list(maxit=1000))#, factr=1e7))
+proc.time() - ptm
+
+# M = 10^4: 214 s
+# M = 10^5: 2859 s
+# M = 10^6: 
+```
+This gives an optimal $n_p = 19.6$ and the following decision rule:
+
+```{r}
+np <- opt$par[14]
+
+w <- np - floor(np)
+x <- (1-w)*xs[,floor(np)] + w*xs[,ceiling(np)]
+  
+ns <- get_ns(opt$par[1:13], x)
+
+plot(x, sapply(ns, max, 2))
+```
+
+Again, we can compare this against the results of optimising w.r.t. the actual posteriors. We can repeat the procedure above for the range of $n_p$:
+
+```{r}
+us <- NULL
+for(np in 1:50){
+  x <- xs[,np]
+  # Get the posterior variance
+  var_1 <- 1/( 1/(sd_0^2) + np/(2*sig^2) )
+  # Get posterior means corresponding to each pilot data sample
+  pms <- var_1*(mu_0/(sd_0^2) + np*x/(2*sig^2))
+  
+  ns2 <- NULL
+  for(m in pms){
+    suppressWarnings( n <- optim(10, exp_u, k=k, rho=rho, mu_0=m, sd_0=sqrt(var_1), sig=sig, method="Brent",
+               lower=2, upper=600)$par )
+    ns2 <- c(ns2, n)
+  }
+  
+  us <- c(us, mean(get_u_cond(ms, ns2, np, k, rho, sig)))
+}
+plot(us)
+```
+
+Now, doing this using quadrature:
+```{r}
+get_u_int_np <- function(z, ms, xs, k, rho, sig, mu_0, sd_0)
+{
+  np <- z[14]
+  
+  # Get the quadrature points
+  cov_mat <- matrix(c(sd_0^2, sd_0^2, sd_0^2, sd_0^2 + 2*sig^2/np),2,2)
+  pts <- mgauss.hermite(100, mu=c(mu_0,mu_0), sigma=cov_mat, prune=0.9)
+  
+  ns <- get_ns(z[1:13], pts$points[,2])
+  
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -sum(get_u_cond(pts$points[,1], ns, np, k, rho, sig)*pts$weights)
+  u
+}
+
+ptm <- proc.time()
+opt <- optim(c(seq(10,80,l=10),0,2,1,30), get_u_int_np, ms=ms, xs=xs, k=k, rho=rho, sig=sig, mu_0=mu_0, sd_0=sd_0,
+      lower = c(rep(0,10),0,1,1,1),
+      upper = c(rep(200,10),100,10,10,50),
+      control=list(maxit=1000))#, factr=1e7))
+proc.time() - ptm
+```
+ 
+## Unknown variance / cluster trial
+
+Is the above interesting in its own right? We have a conjugate scenario, so the natural first thing would be to integrate over the prior where each point evaluated would involve finding the optimal posterior decision.
+
+We can do this optimisation here, because we can calcuate the expected utility of a decision exactly. But if this calculation itself were to require numerical methods to intgrate over the posterior, we would be in trouble.
+
+SO, the method we propose is useful when we dont have an exact expected utility but we do have a conditional (conditioning on all parameters and the pilot data); then, even in a conjuagte case, this will be useful.
+
+But, in a non-conjugate case the method is even more useful - although we won't be able to use quadrature here so need the MC version.
+
+In a cluster trial setting, do we have conjugacy? If we estimate the cluster mean variance from the pilot data, potentially - but if we want to use a beta prior on the ICC, then no. SO take this as our main example - now using a pilot to learn about the effect, total variance, and ICC; so three parameters, and three sufficient stats to base a decision rule on; and potentially 2 dimensions in the decision rule, k and m.
+
+
+
