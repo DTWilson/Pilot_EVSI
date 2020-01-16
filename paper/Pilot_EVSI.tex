@@ -1,0 +1,298 @@
+%\documentclass{article} %[twocolumn] 
+%\documentclass[Crown, times, sagev]{sagej}
+\documentclass[sagev, Crown]{sagej} %
+
+%\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{multirow}
+\usepackage{url}
+
+\setcounter{secnumdepth}{3} %Gives section numbers for cross referencing
+\begin{document}
+
+\runninghead{Wilson et al.}
+
+\title{Estimating and maximising the expected utility of pilot trials using surrogate decision rules}
+
+\author{Duncan T. Wilson\affilnum{1}}%,
+%Rebecca E. A. Walwyn\affilnum{1}, 
+%Julia Brown\affilnum{1} and 
+%Amanda J. Farrin\affilnum{1}}
+
+\affiliation{\affilnum{1}Leeds Institute of Clinical Trials Research, University of Leeds, Leeds, UK} %\\
+%\affilnum{2}Centre for Primary Care \& Public Health, Queen Mary University of London, London, UK}
+
+\corrauth{Duncan T. Wilson, Clinical Trials Research Unit, Leeds Institute of Clinical Trials Research, University of Leeds, Leeds, LS2 9JT, UK}
+\email{d.t.wilson@leeds.ac.uk}
+
+\begin{abstract}
+% (250 limit for SiM)
+
+\end{abstract}
+
+\keywords{Clinical trial, pilot trial, external pilot, statistical decision theory, optimal design, expected value of sample information, Monte Carlo methods}
+
+\maketitle
+
+\section{Introduction}
+
+One approach to choosing the sample size of a clinical trial is through Bayesian decision theory. Given an appropriate utility function, we can choose the same size which maximises the expected utility with respect to a prior distribution on all unknown parameters. These parameters will generally include a treatment effect and one or more so-called nuisance parameters. For example, the standard deviation of a normally distributed outcome. The more that is known about these parameters prior to designing the trial, the more able we will be to make good design decisions.
+
+When there is substantial uncertainty regarding the parameters prior to the planned definitive trial, a small pilot trial can be run to obtain some relevant information. Many methods have been proposed to design these pilot trials and to guide how their data should be used to inform the definitive trial, when the goal is to estimate a nuisance parameter.
+\cite{Teare2014}
+\cite{Julious2006}
+\cite{Whitehead2015}
+\cite{Eldridge2015}
+\cite{Lake2002}
+\cite{Grayling2018}
+\cite{Proschan2005}
+\cite{Schie2014}
+\cite{Wittes1990}
+
+Pilot trials have also been used to learn about the effectiveness of the intervention. This use of pilot trials is more controversial, due to the possible issues arising from the small sample size and potential bias in pilot estimates. In particular, conducting a test of effectiveness using pilot data has been advised against as such tests will generally have low power. However, an analysis of a Bayesian decision-theoretic approach to setting the parameters of such tests has suggested that they can be useful, and that not testing will rarely be optimal.
+\cite{Cocks2013}
+\cite{Lee2012}
+\cite{Sim2019}
+\cite{Lancaster2004}
+\cite{Arain2010}
+\cite{Thabane2010}
+\cite{Stallard2012}
+
+Given the small sample size of pilot trials and the subsequent inability to make any firm conclusions or provide very precise parameter estimates under a frequentist model, a Bayesian approach to their design and analysis is attractive. Given appropriate prior distributions describing initial knowledge and uncertainty in any unknown parameters, the pilot data can be used to update these and provide posterior distributions, which can in turn be used to determine the optimal design of the definitive trial (including the decision of whether or not to run the trial at all) under a Bayesian statistical decision framework (which requires the specification of a utility function). The pilot trial itself can then be designed so as to maximise the expected utility of the pilot-definitive trial programme. This is also known as maximising the expected value of sample information.
+\cite{Lindley1957}
+\cite{Gittins2000}
+\cite{Gittins2000a}
+\cite{Gittins2002}
+\cite{Halpern2001}
+\cite{Willan2005}
+\cite{Turner2004}
+\cite{Spiegelhalter2001}
+
+A practical consideration when taking this approach is the computational challenge it presents. Other than in very special cases involving conjugate priors, simulation-based methods are generally required. A common approach involves a two-level nested MC routine, where pilot data are simulated and for each data set, a set of posterior samples is generated using e.g. MCMC and this is then used to find the optimal terminal decision (in our case, the optimal definitive trial design). As this can take weeks to run, several researchers have developed fast approximations, generally based on using some kind of regression to approximate the expected utility, conditional on the pilot data sufficient statistics, of each decision. This approach may prove difficult if we have a large space of decisions (e.g. a large potential definitive trial sample size) or a continuous one (e.g. the alpha of the definitive trial). We could discretise the space, to get the speed but at the cost of accuracy.
+\cite{Strong2014}
+\cite{Strong2015}
+\cite{Menzies2015}
+\cite{Heath2017}
+\cite{Jalal2017}
+\cite{Heath2019}
+
+We propose a different approach, where we recognise that an MEU analysis of pilot data will map the data to corresponding optimal definitive trial designs, i.e. it will provide a decision rule. Moreover, this decision rule is optimal in the sense that it will have the largest expected utility. We will show that because we can estimate the expected utility of any decision rule, we can solve the problem by considering surrogate rules and search over these, knowing that the optima will coincide with MEU. 
+
+The remainder of this paper is structured as follows...
+
+\section{Problem and motivating example}\label{sec:problem}
+
+Consider settings where an external pilot is to be conducted in advance of a definitive trial. Denote the per-arm sample size of these trials by $n_1$ and $n_2$ respectively. The primary analysis of the definitive trial will be a conventional hypothesis test comparing the control and intervention arms, using a typical type I error rate of $\alpha = 0.05$ (two-sided). We assume that the power of the definitive trial, conditional on $\theta$, can be calculated. The pilot trial data is to be used to inform the choice of sample size for the definitive trial.
+
+We work in a Bayesian-frequentist hybrid framework. Denoting the unknown parameters by $\theta$, we specify a prior distribution $p(\theta)$ before the pilot trial is conducted. The pilot data, denoted $x_1$, is then used to obtain the posterior $p(\theta ~|~ x_1, n_1)$. The sample size of the definitive trial is then chosen so as to maximise expected utility with respect to this distribution.
+
+Given this procedure, the only decision to be made is the choice of pilot sample size $n_1$. We do this by maximising the expected utility of the full pilot-then-definitive trial programme, with respect to the prior $p(\theta)$. Aside from the operational issues of specifying an appropriate prior and utility function, the main methodological issue is calculating the expected utility of a programme with pilot sample size $n_1$. 
+
+\subsection{Motivating example - REACH}
+
+REACH was two-arm parallel group cluster randomised external pilot, where each cluster was a care home. REACH aimed to recruit $n_1 = 6$ care homes into each arm. The number of residents from each care home subsequently recited into the trial was random, but with some prior idea in terms of the average number and the variation in it between care homes. 
+
+The definitive trial was to be designed to detect an effect of $\mu = 0.2$, using the standard design effect formula for cluster randomised trials with uncertain cluster sizes:
+$$
+n_2 = n [1 + (\bar{m} + cv^2 - 1)\rho].
+$$
+A more direct way to state the definitive trial sample size calculation notes that the intended analysis is a $z$-test of cluster means. We can therefore focus on the variance of cluster means as the nuisance parameter of interest, and use a standard sample size formula. That is, rather than decompose the variance into its various components, we can estimate it directly from the pilot data.
+
+We specify the prior using the decomposition. Specifically, we put an inverse normal gamma joint prior on the mean and variance of the cluster sizes. We then use an inverse gamma prior for the within-cluster variance $\sigma_w^2$, and a beta prior for the intracluster correlation $\rho$. Together, these imply a prior for the nuisance parameter of interest, the cluster mean variance $\sigma^2_c$. This is not a conjugate prior for the corresponding sampling model (where the estimate follows a scaled chi-squared distribution), and so we would need to use some numerical sampler when analysing the pilot data and computing the posterior.
+
+Given this prior on $\theta = (\mu, \sigma_c^2)$, we set up a utility function as in WP3.1.
+
+\section{Methods}
+
+Utility is a function of the true parameter value, the sample size used at each stage, and the data obtained at each stage (see WP3.1) written $u(\theta, n_1, x_1, n_2, x_2)$. After observing pilot data $x_1$ trial we will choose the definitive trial sample size $n_2$ so as to maximise expected utility with respect to the posterior $p(\theta ~|~ x_1, n_1)$:
+$$
+\max_{n_2} \mathbb{E}_{\theta | x_1, n_1}[u(\theta, n_1, x_1, n_2, x_2)].
+$$
+The expected utility of the full programme with a given pilot sample size $n_1$ is then
+\begin{equation}\label{eqn:MEU}
+\mathbb{E}_{x_1 | n_1} \left( \max_{n_2} \mathbb{E}_{\theta | x_1, n_1}[u(\theta, n_1, x_1, n_2, x_2)] \right).
+\end{equation}
+We then want to choose $n_1$ to maximise this value. Writing the problem in terms of the corresponding integrals,
+$$
+\max_{n_1} \int \left( \max_{n2} \left[ \int \mathbb{E}_{x_2 | \theta}[u(\theta, n_1, x_1, n_2, x_2)] p(\theta ~|~ x_1, n_1) d\theta \right] \right) p(x_1 ~|~ n_1) dx_1.
+$$
+Given the utility function described in Section \ref{sec:problem}, the expectation term can be calculated analytically. We consider the most general case where the posterior distribution $p(\theta ~|~ x_a, n_1)$ is not known in closed form, resulting in a Monte Carlo approximation of the inner integral being required. This implies that the inner maximisation cannot be solved analytically, requiring numerical methods instead. The marginal distribution $p(x_1 ~|~ n_1)$ may often be available, we do not assume it has a sufficiently convenient form to allow for a quadrature type method for the outer integral. The outer maximisation will again require numerical methods.
+
+\subsection{Two-level nested Monte Carlo}\label{sec:nested_MC}
+
+We can solve the problem by estimating the expected utility (\ref{eqn:MEU}) for a range of possible $n_1$ choices, possibly in the context of a simple optimisation algorithm such as the bisection method. For any given $n_1$, expected utility can be estimated using a two-level nested Monte Carlo routine as described in Algorithm \ref{alg:nested_MC}. 
+
+\begin{algorithm}
+\caption{Two-levl nested Monte Carlo}\label{alg:nested_MC}
+\begin{algorithmic}[1]
+\For{$1 = 1, 2, \ldots N$}
+\State Sample $\theta^{(i)} \sim p(\theta)$
+\State Sample pilot data $x^{(i)} \sim p(x ~|~ \theta^{(i)}, n_1)$
+\State Draw $M$ samples from the posterior, $\theta^{(j)} \sim p(\theta ~|~ x^{(i)}, n_1)$
+\State Find  $n_2^{(i)} = \arg\max_{n_2} \frac{1}{M} \sum_{j=1}^{M} u(\theta^{(j)}, n_1, x_1^{(i)}, n_2)$
+\EndFor 
+\State Calculate $\frac{1}{N} \sum_{i=1}^{N} \mathbb{E}_{x_2 | \theta^{(i)}, n_1, x_1^{(i)}, n_2^{(i)}}[ u(\theta^{(i)}, n_1, x_1^{(i)}, n_2^{(i)}) ]$
+\end{algorithmic}
+\end{algorithm}
+
+The algorithm involves first sampling $N$ draws $\theta^{(i)}, i=1,\ldots,N$ from the prior distribution $p(\theta)$, and for each of these sampling a corresponding pilot data $x^{(i)} \sim p(x ~|~ \theta^{(i)}, n_1)$. Then, for each data set we use a numerical Bayesian sampler (e.g. Stan) to obtain a set of samples from the posterior distribution $p(\theta ~|~ x^{(i)}, n_1)$. We then use these to determine the optimal sample size of the definitive trial. Finally, we average over the $N$ samples in the outer loop to obtain a Monte Carlo estimate of the expected utility of the full programme.
+
+Algorithm \ref{alg:nested_MC} will produce an unbiased estimate of the true expected utility, with a known standard error that will reduce at a rate of $1/\sqrt(N)$, under the assumption that the sampling and optimisation of steps 4 and 5 are sufficiently robust. It is computationally intensive,  particularly because for each of the $N$ outer loop iterations we are required to run a numerical sampler and then solve an optimisation problem.
+
+\subsection{Surrogate decision rules}
+
+Algorithm \ref{alg:nested_MC} involves finding an optimal definitive trial sample size for a number of simulated pilot data sets (see steps 4 and 5), and then using these $n_2$'s to estimate expected utility. Here we consider an alternative approach where steps 4 and 5 are replaced by a pre-specified decision rule $d(x_1): \mathcal{X}_1 \rightarrow N$. Note that
+$$
+\max_{n_2} \mathbb{E}_{\theta | x_1, n_1}[ u(\theta, n_1, x_1, n_2, x_2)] \geq \mathbb{E}_{\theta | x_1, n_1}[ u(\theta, n_1, x_1, d(x_1), x_2)] 
+$$
+for all $d$. So, we can recast the problem as one of finding the optimal decision rule $d$, knowing that the global optima coincides with equation (\ref{eqn:MEU}). We can re-write the expected utility of a pilot trial with sample size $n_1$ and decision rule $d$ as
+\begin{align}\label{eqn:surr}
+\mathbb{E}_{x_1 | n_1} \left[ \mathbb{E}_{\theta | x_1, n_1}[ u(\theta, n_1, x_1, d(x_1), x_2)] \right]
+& = \mathbb{E}_{x_1, \theta | n_1} \left[ \mathbb{E}_{x_2 | \theta, x_1, n_1} [ u(\theta, n_1, x_1, d(x_1), x_2)] \right] \nonumber \\
+& \approx \frac{1}{N} \sum_{i=1}^{N} \mathbb{E}_{x_2 | \theta^{(i)}, n_1, x_1^{(i)}}[ u(\theta^{(i)}, n_1, x_1^{(i)}, d(x_1^{(i)}), x_2) ],
+\end{align}
+where $\theta^{(i)}, x^{(i)} \sim p(\theta, x)$. As noted in Section \ref{sec:problem}, we are considering problems where we have a power function for the definitive trial and as such the expectation in th summation can be calculated quickly and exactly. This avoids the computationally intensive nested Monte Carlo of algorithm \ref{alg:nested_MC}, at the expense of requiring equation (\ref{eqn:surr}) to be calculated repeatedly in the context of a search over a space of decision rules.
+
+\subsubsection{Splines}
+
+We consider decision rules defined over a space of cubic spline functions. Considering first the case where the pilot data can be summarised by a scalar sufficient statistic, we set the spline knots at even quantiles of the samples $x_1^{(1)}, \ldots , x_1^{(N)}$ (with the number of knots to be chosen). Given these pre-specified knots, we can obtain the the set of $k + 4$ cubic splines which serve as a basis for the space of all cubic splines defined over the same knots. Denoting these so-called b-splines by $\phi_i(x_1), k=1,\ldots,k+4$, a decision rule is then
+$$
+d(x_1) = \left\lfloor \sum_{i=1}^{k+4} a_i \phi_i(x_1) \right\rfloor,
+$$
+where we apply the floor operator $\left\lfloor . \right\rfloor$ to convert the continuous spline function into the required integer output. Searching over the space of decision rules then amounts to searching over the space of vectors $\mathbf{a} = (a_0, a_1, a_2, \ldots , a_{k+3})$. We can solve this problem using an appropriate optimisation algorithm, such as Subplex \cite{Rowan1990} as implemented in R via the package `nloptr' \cite{Ypma2018}.
+
+For sufficient statistics of dimension $\geq 2$, we can apply the same approach using tensor product splines. For example, we can deal with the two statistics $x_1$ and $y_1$ by first constructing the b-splines for each one dimensional space, $\phi_i(x_1), k=1,\ldots,k+4$ and $\psi_i(x_1), k=1,\ldots,k+4$ respectively, and then using decision rules of the form 
+$$
+d(x_1, y_1) = \left\lfloor \sum_{i=1}^{k+4} \sum_{j=1}^{k+4} a_{i,j} \phi_i(x_1) \psi_j(y_1) \right\rfloor.
+$$
+Although this approach can be extended in theory to any number of dimensions, in practice we find we are limited to two or three at most due to the explosion in number of coefficients, and therefore in the dimensions of the optimisation problem's solution space, resulting from the nested summations. For example, using b-splines defined over $k = 6$ knots in three dimensions requires $(k+4)^2 = 1000$ coefficients. When solving problems in two dimensions, we use the large-scale optimisation algorithms implemented in the R package `BB' \cite{Varadhan2009}.
+
+\subsubsection{Optimising $n_1$}
+
+Although we could use the above to estimate the expected utility for a range of $n_1$ and choose the maximiser as our pilot sample size, an alternative is to incorporate $n_1$ into the optimisation problem \ref{eqn:} as a solution variable. Thus, we now search over the joint space of decision rules and pilot sample size to find that with maximum expected utility. The addition of an extra solution variable does not have a large impact on the difficulty of solving the problem; and we would expect it to lead to efficiencies over the alternative by allowing information regarding the form of decision rule to be shared, in the sense that we would expect similar optimal decision rules for similar $n_1$s.
+
+In practice, we execute this approach by first simulating a sequence of pilot data sufficient statistics for each sampled parameter $\theta^{(i)}$, giving a set of samples $\mathbf{x}^{(m)}, m = 0, 1, \ldots , n_1^{max}$. For each $\mathbf{x}^{(m)}$ we must set up the b-spline basis functions. When optimising we treat $n_1$ as a continuous variable, and estimate the expected utility for any non-integer $n_1$ as the linear combination of the expected utility 
+
+A further advantage of the surrogate decision rule approach over the nested MC method is that optimisation over the pilot sample size, $n_1$, can be incorporated directly into the existing optimisation problem. This leads to efficiencies since it effectively allows some sharing of information in the sense that a optimal decision rule for some $n_1$ will likely look similar to the optimal rule for some other $n_1'$, depending on how close they are.
+
+\subsection{Nonparametric regression}
+
+An alternative approach has been suggested in the context of calculating the expected value of information for a definitive trial \cite{Strong2015}. Applying to our problem, the method involves considering each decision which could be made after the trial (in our case, each definitive trial sample size) and using a nonparametric regression model to predict expected utility based on the pilot data $x$. Specifically, we begin as before by generating a set of joint samples from $p(\theta, x)$, and then calculate the associated vector of utilities $u^{(i)}_k$ for each definitive sample size $k = 0, 1, \ldots, n_{max}$. Then, for each $k$, we regress $u^{(i)}_k$ on $x^{(i)}$. The mean regression line corresponds to the expected utility of decision $k$, conditional on observing $x$. Given this set of regression models, we then proceed to estimate the conditional expected utility for each $k$ for each $x^{(i)}$ and choose the $k$ with the largest of these. Thus, we have mapped our samples $x^{(i)}$ to decisions, and can estimate expected utility as before. In order to choose the optimal pilot sample size $n_1$, we repeat the full process in a manner similar to that described in Section \ref{sec:nested_MC}.
+
+It is suggested that cubic splines should be used in the regressions, via the `gam' function in the R package `mgcv'. These can be fitted to large data sets relatively easily, but the large number of decsisons here (as opposed to the two or three motivating the method originally) may lead to a considerable time requirement. Moreover, the standard errors of the esimtated expected utility will be larger using this method than either of the two previously described, meaning that a larger number of samples will be needed to attain the same precision.
+
+%Would involve taking the simulated outer loop samples and using these to build a regression model for each definitive trial sample size, predicting expected utility of that sample size from the pilot data. Then for each x we choose the n with largest expected utility at that point. Harder to generalise to another design param - exponential growth of regression models. Even just for sample size, this can take some time - fitting one model to $10^5$ samples and then predicting utility at these takes 9.8 seconds; and we might want to fit 100 of these. And the standard errors of the GAM method are larger, meaning we would need to increase the outer sample by around 1.44 - 2.6 times to get the same precision (from the Strong paper). And this all then needs to be done several times to get an optimal pilot sample size. So in total we would be looking at around 4 hours (compared with the 172s of the proposed method in example 1, 80 times faster). Would scale very poorly if we add another design variable, e.g. alpha - would need a grid of regression models, so increasing run time by a factor of 10 - 100 say.
+
+\subsection{Standard errors}
+
+Need to quantify the uncertainty in our estimates of EVSI. 
+
+For the surrogate approach, this is easy - conditional on the rule, we just have MC error from the outer loop. So if we use the rule(s), we have a good estimate. If we plan on doing an MCMC analysis and subsequent optimisation, the rule will be biased to the extent allowed by our optimisation. We could potentially measure this using some nested MC runs.
+
+For the nested MC approach this is easy enough too - we need to assume that the MCMC routine is reliable enough (in particular, $M$ is large enough) to get the right choice of $n_2$. Then all uncertainty comes from the outer loop, as above. Note that we might still get a biased answer - only unbiased if the repeated MCMC runs are exactly as we will use in the pilot analysis (same model, $M$, and random seed). In reality we may do some iteration as we explore the model diagnostics and adjust e.g. the parametrisation or the sampling routine to get a better sample.
+
+\subsection{Implementation}
+
+For efficiency, we evaluate each of the b-splines at each of the $x_1^{(i)}$ sampled points and storing these in a matrix $B$. the vector of the definitive sample sizes corresponding to some rule $a$ is then just $B a$.  
+
+When using MC samples for the integration, we use sample path optimisation - increasing the number of samples, and using the previous optima as the starting point in the search.
+
+Add a penalty term to ensure decision rule gives positive $n_2$ - means that we can't calculate the gradient.
+
+\section{Illustrative applications}
+
+For all examples we will use the same basic utility set-up. Following WP3.1, we use an exponential utility (with risk parameter $\rho$) based on an additive value function with three attributes: the total sample size, the change in average primary endpoint, and the cost of treatment.
+
+For each example we will compare with the nested method, which we may be able to shortcut in some way. We want to compare performance for different outer samples $N$. For the surrogate method, we may want to see how performance changes if we use $N=10^6$ for the final expectation, but use only a subset for the building of the rule. Equivalently, ask whether we can get the extra precision of a high $N$ but without the bias of a low rule-building $N$.
+
+For all examples, compare methods in terms of estimating the utility of a programme for a fixed $n_1$. After this, show how we can also optimise $n_1$ when using the surrogate approach. Don't need to implement the bisection search using the nested MC or GAM approach - can just give an indication of runtime based on complexity bounds for a simple bisection search.
+
+\subsection{Normal endpoint with known variance (OK-Diabetes)}
+
+To make the ideas clear, apply the new method to a simple hypothetical example which we can solve (almost) exactly using method 1 - a normal prior on treatment effect, known variance. 
+
+Use the three methods to optimise $n_1$. Use a bisection search for the last two methods. Report the suggested sample size with the associated estimated utility and the standard error in it. For the optimal $n_1$, illustrate the method more fully by showing the decision rules given by each method, and showing how the spline function is formed. 
+
+Do this for $10^4, 10^5$ and $10^6$ samples.
+
+\subsection{Binary endpoint}
+
+Parametrised with a beta prior on the control arm probability, and a normal prior on the log odds ratio. Utility is based on the absolute difference between control and intervention. Sufficient statistics are counts in each arm. 
+
+Although we do require MCMC here since the implied prior on the intervention rate is not conjugate, the computational burden is much less and scales well with the number of outer samples. This is because the possible outcomes of the pilot are finite due to the binary outcome - $n_1^2$ at most. And generally much less - we can simulate the $N$ pilot data first and then just extract the unique outcomes. For example, taking $n_1 = 100$ and $N = 10^6$ led to only 2250 unique outcomes. So, we can do MCMC and optimisation for these, and then use these repeatedly over the full $N$ sample.
+
+Still of interest to compare the two methods, as the surrogate rule approach will still be faster. And it means we can do a gold standard comparison without it taking weeks.
+
+\cite{Brunier1994} consider a similar problem but with a single arm pilot and a fixed phase III sample size (so the decision is just stop/go). Same with \cite{Stallard1998}.
+
+\subsection{Normal endpoint with clustering (REACH)}
+
+Setting: a cRCT with fixed $m$ but unknown total variance and unknown ICC; priors on these as following Speigelhalter 2000, giving a non-conjugate prior on the variance of cluster means; normal prior on treatment effect. For the definitive trial sample sizing we are interested only in the cluster mean variance and effect size, so a 2D summary statistic.
+
+Break this down into two examples. First, we consider learning only about the cluster mean variance. This corresponds to assuming the effect at stages 1 and 2 are independent, which we can think of as an extreme version of the `pilots are biased' argument. In this case we have a 1D summary stat.
+
+Next, look at the 2D problem where we measure and learn both the variance and the effect size.
+
+For both sub-problems, we will need to use the full nested MC approach as the comparison, which will take days/weeks to run.
+
+\subsection{Variance components for a cRCT}
+
+Consider designing a cRCT, where we need to choose both the number of clusters $k$ and the size of each cluster $m$. We us the pilot data to learn about the variance components $\sigma_w^2$ and $\sigma_b^2$, but not about the effect size. So we have two dimensions to our sufficient statistic, and two dimensions to the optimal design.
+
+We will need to use the full nested MC approach for comparison.
+
+To use the nonparametric regression approach, we need to build 2D gam models for the range of ks and ms; so maybe of the order 1000 models if using full granularity.
+
+\section{Results}
+
+\section{Extensions}
+
+\subsection{Optimising definitive trial $\alpha$}
+
+Should just be a computational issue, as it will double the solution space when searching for decision rules as we now need two rules, one for n and one for alpha.
+
+
+\subsection{Internal pilots}
+
+Main thing is to control the overall type I error. Can't do this analytically, but for any decision rule we can use a sample under the null to estimate alpha and use this as a constraint in our optimisation. Will need to optimise over the main trial critical value here, so follows on from the above.
+
+
+
+\section{Discussion}
+
+Assuming that we have a power function for the definitive trial - could relax, more computations.
+
+Form of utility very flexible.
+
+Our method involves, at each iteration, calculating the utility of a definitive trial from a set of $\theta, n_2$ pairs. The $\theta$s are the same each time, but the $n_2$'s vary. For us, this is not a problem as the utility calculation is simple; but for complex health economic models it may be computationally demanding. The HE literature often talks about generating one PSA sample and not requiring any more - our method has this property, but may limit it since here we have a large set of decisions, not just 2 or three. Perhaps a key distinction between this and the HE context - utilities generally quite simple? But need to show that in this simple setting, the HE methods are not (uniformly) better than the proposal. Note that \cite{Heath2017} notes that \cite{Strong2015} will tend to be better for low dimensional summary stats, so we can assume this is the competitor for our problem.
+
+
+
+\ldots
+
+\begin{acks}
+Acknowledgements.
+\end{acks}
+
+\begin{dci}
+The Authors declare that there is no conflict of interest.
+\end{dci}
+
+\begin{funding}
+This work was supported by the Medical Research Council [grant number MR/N015444/1].
+\end{funding}
+
+\bibliographystyle{SageV}
+\bibliography{C:/Users/meddwilb/Documents/Literature/Databases/DTWrefs}
+
+\section*{Appendix}
+
+\end{document}

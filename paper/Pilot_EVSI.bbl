@@ -1,0 +1,294 @@
+\begin{thebibliography}{10}
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\urlprefix}{URL }
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{DOI:\discretionary{}{}{}#1}\else
+  \providecommand{\doi}{DOI:\discretionary{}{}{}\begingroup
+  \urlstyle{rm}\Url}\fi
+\providecommand{\eprint}[2][]{\url{#2}}
+
+\bibitem{Browne1995}
+Browne RH.
+\newblock On the use of a pilot sample for sample size determination.
+\newblock \emph{Statistics in Medicine} 1995; 14(17): 1933--1940.
+\newblock \doi{10.1002/sim.4780141709}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.4780141709}.
+
+\bibitem{Teare2014}
+Teare M, Dimairo M, Shephard N et~al.
+\newblock Sample size requirements to estimate key design parameters from
+  external pilot randomised controlled trials: a simulation study.
+\newblock \emph{Trials} 2014; 15(1): 264.
+\newblock \doi{10.1186/1745-6215-15-264}.
+\newblock \urlprefix\url{http://www.trialsjournal.com/content/15/1/264}.
+
+\bibitem{Julious2006}
+Julious SA and Owen RJ.
+\newblock Sample size calculations for clinical studies allowing for
+  uncertainty about the variance.
+\newblock \emph{Pharmaceutical Statistics} 2006; 5(1): 29--37.
+\newblock \doi{10.1002/pst.197}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/pst.197}.
+
+\bibitem{Whitehead2015}
+Whitehead AL, Julious SA, Cooper CL et~al.
+\newblock Estimating the sample size for a pilot randomised trial to minimise
+  the overall trial sample size for the external pilot and main trial for a
+  continuous outcome variable.
+\newblock \emph{Statistical Methods in Medical Research} 2015;
+  \doi{10.1177/0962280215588241}.
+\newblock
+  \urlprefix\url{http://smm.sagepub.com/content/early/2015/06/27/0962280215588241.abstract}.
+\newblock
+  \eprint{http://smm.sagepub.com/content/early/2015/06/27/0962280215588241.full.pdf+html}.
+
+\bibitem{Eldridge2015}
+Eldridge SM, Costelloe CE, Kahan BC et~al.
+\newblock How big should the pilot study for my cluster randomised trial be?
+\newblock \emph{Statistical Methods in Medical Research} 2015;
+  \doi{10.1177/0962280215588242}.
+\newblock
+  \urlprefix\url{http://smm.sagepub.com/content/early/2015/06/12/0962280215588242.abstract}.
+\newblock
+  \eprint{http://smm.sagepub.com/content/early/2015/06/12/0962280215588242.full.pdf+html}.
+
+\bibitem{Lake2002}
+Lake S, Kammann E, Klar N et~al.
+\newblock Sample size re-estimation in cluster randomization trials.
+\newblock \emph{Statistics in Medicine} 2002; 21(10): 1337--1350.
+\newblock \doi{10.1002/sim.1121}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.1121}.
+
+\bibitem{Grayling2018}
+Grayling MJ, Mander AP and Wason JMS.
+\newblock Blinded and unblinded sample size reestimation procedures for
+  stepped-wedge cluster randomized trials.
+\newblock \emph{Biometrical Journal} 2018; 60(5): 903--916.
+\newblock \doi{10.1002/bimj.201700125}.
+\newblock
+  \urlprefix\url{https://onlinelibrary.wiley.com/doi/abs/10.1002/bimj.201700125}.
+\newblock
+  \eprint{https://onlinelibrary.wiley.com/doi/pdf/10.1002/bimj.201700125}.
+
+\bibitem{Proschan2005}
+Proschan MA.
+\newblock Two-stage sample size re-estimation based on a nuisance parameter: A
+  review.
+\newblock \emph{Journal of Biopharmaceutical Statistics} 2005; 15(4): 559--574.
+\newblock \doi{10.1081/bip-200062852}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1081/BIP-200062852}.
+
+\bibitem{Schie2014}
+S S and M M.
+\newblock Re-estimating sample size in cluster randomised trials with active
+  recruitment within clusters.
+\newblock \emph{Statistics in Medicine} 2014; 33(19): 3253--3268.
+\newblock \doi{10.1002/sim.6172}.
+\newblock
+  \urlprefix\url{https://onlinelibrary.wiley.com/doi/abs/10.1002/sim.6172}.
+\newblock \eprint{https://onlinelibrary.wiley.com/doi/pdf/10.1002/sim.6172}.
+
+\bibitem{Wittes1990}
+Wittes J and Brittain E.
+\newblock The role of internal pilot studies in increasing the efficiency of
+  clinical trials.
+\newblock \emph{Statistics in Medicine} 1990; 9(1-2): 65--72.
+\newblock \doi{10.1002/sim.4780090113}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.4780090113}.
+
+\bibitem{Cocks2013}
+Cocks K and Torgerson DJ.
+\newblock Sample size calculations for pilot randomized trials: a confidence
+  intervalÂ approach.
+\newblock \emph{Journal of Clinical Epidemiology} 2013; 66(2): 197 -- 201.
+\newblock \doi{http://dx.doi.org/10.1016/j.jclinepi.2012.09.002}.
+\newblock
+  \urlprefix\url{http://www.sciencedirect.com/science/article/pii/S0895435612002740}.
+
+\bibitem{Lee2012}
+Lee JJ and Chu CT.
+\newblock Bayesian clinical trials in action.
+\newblock \emph{Statistics in Medicine} 2012; 31(25): 2955--2972.
+\newblock \doi{10.1002/sim.5404}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.5404}.
+
+\bibitem{Sim2019}
+Sim J.
+\newblock Should treatment effects be estimated in pilot and feasibility
+  studies?
+\newblock \emph{Pilot and Feasibility Studies} 2019; 5(1).
+\newblock \doi{10.1186/s40814-019-0493-7}.
+
+\bibitem{Lancaster2004}
+Lancaster GA, Dodd S and Williamson PR.
+\newblock Design and analysis of pilot studies: recommendations for good
+  practice.
+\newblock \emph{Journal of Evaluation in Clinical Practice} 2004; 10(2):
+  307--312.
+\newblock \doi{10.1111/j..2002.384.doc.x}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1111/j..2002.384.doc.x}.
+
+\bibitem{Arain2010}
+Arain M, Campbell M, Cooper C et~al.
+\newblock What is a pilot or feasibility study? a review of current practice
+  and editorial policy.
+\newblock \emph{BMC Medical Research Methodology} 2010; 10(1): 67.
+\newblock \doi{10.1186/1471-2288-10-67}.
+\newblock \urlprefix\url{http://www.biomedcentral.com/1471-2288/10/67}.
+
+\bibitem{Thabane2010}
+Thabane L, Ma J, Chu R et~al.
+\newblock A tutorial on pilot studies: the what, why and how.
+\newblock \emph{BMC Medical Research Methodology} 2010; 10(1): 1.
+\newblock \doi{10.1186/1471-2288-10-1}.
+\newblock \urlprefix\url{http://www.biomedcentral.com/1471-2288/10/1}.
+
+\bibitem{Stallard2012}
+Stallard N.
+\newblock Optimal sample sizes for phase {II} clinical trials and pilot
+  studies.
+\newblock \emph{Statistics in Medicine} 2012; 31(11-12): 1031--1042.
+\newblock \doi{10.1002/sim.4357}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.4357}.
+
+\bibitem{Lindley1957}
+Lindley DV.
+\newblock A statistical paradox.
+\newblock \emph{Biometrika} 1957; 44(1/2): 187.
+\newblock \doi{10.2307/2333251}.
+\newblock \urlprefix\url{http://dx.doi.org/10.2307/2333251}.
+
+\bibitem{Gittins2000}
+Gittins J and Pezeshk H.
+\newblock How large should a clinical trial be?
+\newblock \emph{Journal of the Royal Statistical Society: Series D (The
+  Statistician)} 2000; 49(2): 177--187.
+\newblock \doi{10.1111/1467-9884.00228}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1111/1467-9884.00228}.
+
+\bibitem{Gittins2000a}
+Gittins J and Pezeshk H.
+\newblock A behavioral bayes method for determining the size of a clinical
+  trial.
+\newblock \emph{Drug Information Journal} 2000; 34(2): 355--363.
+\newblock \doi{10.1177/009286150003400204}.
+\newblock \urlprefix\url{http://dij.sagepub.com/content/34/2/355.abstract}.
+\newblock \eprint{http://dij.sagepub.com/content/34/2/355.full.pdf+html}.
+
+\bibitem{Gittins2002}
+Gittins JC and Pezeshk H.
+\newblock A decision theoretic approach to sample size determination in
+  clinical trials.
+\newblock \emph{Journal of Biopharmaceutical Statistics} 2002; 12(4): 535--551.
+\newblock \doi{10.1081/BIP-120016234}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1081/BIP-120016234}.
+\newblock PMID: 12477073, \eprint{http://dx.doi.org/10.1081/BIP-120016234}.
+
+\bibitem{Halpern2001}
+Halpern J, Brown BW and Hornberger J.
+\newblock The sample size for a clinical trial: A bayesian decision theoretic
+  approach.
+\newblock \emph{Statistics in Medicine} 2001; 20(6): 841--858.
+\newblock \doi{10.1002/sim.703}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.703}.
+
+\bibitem{Willan2005}
+Willan AR and Pinto EM.
+\newblock The value of information and optimal clinical trial design.
+\newblock \emph{Statistics in Medicine} 2005; 24(12): 1791--1806.
+\newblock \doi{10.1002/sim.2069}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.2069}.
+
+\bibitem{Turner2004}
+Turner RM, Toby~Prevost A and Thompson SG.
+\newblock Allowing for imprecision of the intracluster correlation coefficient
+  in the design of cluster randomized trials.
+\newblock \emph{Statistics in Medicine} 2004; 23(8): 1195--1214.
+\newblock \doi{10.1002/sim.1721}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.1721}.
+
+\bibitem{Spiegelhalter2001}
+Spiegelhalter DJ.
+\newblock Bayesian methods for cluster randomized trials with continuous
+  responses.
+\newblock \emph{Statistics in Medicine} 2001; 20(3): 435--452.
+\newblock \doi{10.1002/1097-0258(20010215)20:3<435::AID-SIM804>3.0.CO;2-E}.
+\newblock
+  \urlprefix\url{http://dx.doi.org/10.1002/1097-0258(20010215)20:3<435::AID-SIM804>3.0.CO;2-E}.
+
+\bibitem{Strong2014}
+Strong M, Oakley JE and Brennan A.
+\newblock Estimating multiparameter partial expected value of perfect
+  information from a probabilistic sensitivity analysis sample.
+\newblock \emph{Medical Decision Making} 2014; 34(3): 311--326.
+\newblock \doi{10.1177/0272989x13505910}.
+\newblock \urlprefix\url{https://doi.org/10.1177%2F0272989x13505910}.
+
+\bibitem{Strong2015}
+Strong M, Oakley JE, Brennan A et~al.
+\newblock Estimating the expected value of sample information using the
+  probabilistic sensitivity analysis sample: a fast, nonparametric
+  regression-based method.
+\newblock \emph{Medical Decision Making} 2015; 35(5): 570--583.
+\newblock \doi{10.1177/0272989x15575286}.
+
+\bibitem{Menzies2015}
+Menzies NA.
+\newblock An efficient estimator for the expected value of sample information.
+\newblock \emph{Medical Decision Making} 2015; 36(3): 308--320.
+\newblock \doi{10.1177/0272989x15583495}.
+
+\bibitem{Heath2017}
+Heath A, Manolopoulou I and Baio G.
+\newblock Efficient monte carlo estimation of the expected value of sample
+  information using moment matching.
+\newblock \emph{Medical Decision Making} 2017; 38(2): 163--173.
+\newblock \doi{10.1177/0272989x17738515}.
+
+\bibitem{Jalal2017}
+Jalal H and Alarid-Escudero F.
+\newblock A gaussian approximation approach for value of information analysis.
+\newblock \emph{Medical Decision Making} 2017; 38(2): 174--188.
+\newblock \doi{10.1177/0272989x17715627}.
+
+\bibitem{Heath2019}
+Heath A, Manolopoulou I and Baio G.
+\newblock Estimating the expected value of sample information across different
+  sample sizes using moment matching and nonlinear regression.
+\newblock \emph{Medical Decision Making} 2019; 39(4): 346--358.
+\newblock \doi{10.1177/0272989x19837983}.
+
+\bibitem{Rowan1990}
+Rowan T.
+\newblock \emph{Functional Stability Analysis of Numerical Algorithms}.
+\newblock PhD Thesis, 1990.
+
+\bibitem{Ypma2018}
+Ypma J, Borchers HW and Eddelbuettel D.
+\newblock The nlopt nonlinear-optimization package, 2018.
+\newblock
+  \urlprefix\url{https://cran.r-project.org/web/packages/nloptr/nloptr.pdf}.
+
+\bibitem{Varadhan2009}
+Varadhan R and Gilbert P.
+\newblock {BB}: An {R} package for solving a large system of nonlinear
+  equations and for optimizing a high-dimensional nonlinear objective function.
+\newblock \emph{Journal of Statistical Software} 2009; 32(4): 1--26.
+\newblock \urlprefix\url{http://www.jstatsoft.org/v32/i04/}.
+
+\bibitem{Brunier1994}
+Brunier HC and Whitehead J.
+\newblock Sample sizes for phase {II} clinical trials derived from bayesian
+  decision theory.
+\newblock \emph{Statistics in Medicine} 1994; 13(23-24): 2493--2502.
+\newblock \doi{10.1002/sim.4780132312}.
+\newblock \urlprefix\url{http://dx.doi.org/10.1002/sim.4780132312}.
+
+\bibitem{Stallard1998}
+Stallard N.
+\newblock Sample size determination for phase {II} clinical trials based on
+  bayesian decision theory.
+\newblock \emph{Biometrics} 1998; 54(1): 279.
+\newblock \doi{10.2307/2534014}.
+
+\end{thebibliography}
