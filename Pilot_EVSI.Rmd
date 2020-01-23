@@ -127,12 +127,8 @@ get_u_cond <- function(thetas, ns, np, k, rho, sig)
   t <- 1
   #t <- ns >= 2
   #ns <- abs(ns)
-  
-  # Calculate the critical value to give alpha = 0.025
-  ds <- qnorm(1-0.025)*sqrt(2*sig^2/ns)
-  # Get resulting power
 
-  pows <- 1-pnorm(ds, thetas, sqrt(2*sig^2/(ns)))
+  pows <- 1-pnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))
   
   utils <- t*(pows*(1-exp(-rho*(k[1]*thetas + k[2]*(ns+np)))) +
     (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))) +
@@ -145,7 +141,7 @@ get_u_cond <- function(thetas, ns, np, k, rho, sig)
 ```{r}
 # Set up basis functions
 knots <- seq(quantile(xs, c(0.01, 0.99))[1], quantile(xs, c(0.01, 0.99))[2], l = 10)
-knots <- quantile(xs, seq(0.05,0.95,l=10))
+#knots <- quantile(xs, seq(0.05,0.95,l=10))
 bsMat <- bSpline(xs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
 
 get_u_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
@@ -158,6 +154,30 @@ get_u_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
   u <- -mean(get_u_cond(thetas, ns, np, k, rho, sig))#, na.rm=T)
   u + pen
 }
+```
+
+Get derivatives:
+
+```{r}
+get_grads_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
+{
+  ns <- bsMat %*% z
+  
+  f <- 1-pnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))
+  fd <- -dnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))*(-thetas/(2*sqrt(2*ns*sig^2)))
+  g1 <- 1 - exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
+  g1d <- rho*k[2]*exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
+  
+  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  -(t(dfdn) %*% bsMat)/length(ns)
+}
+
+# Check against numerical gradient
+get_grads_mc(z, thetas[1], bsMat[1,], xs, np, k, rho, sig)
+grad(get_u_mc, z, thetas=thetas[1], bsMat=bsMat[1,], np=np, k=k, rho=rho, sig=sig)
 ```
 
 Finally, we can optimise:
@@ -192,17 +212,13 @@ proc.time() - ptm
 z <- rep(10,14)
 
 ptm <- proc.time()
-for(i in 0:0){
-print(i)
-#ptm <- proc.time()
-opt2 <- suppressWarnings( BBoptim(z, get_u_mc,
+opt2 <- suppressWarnings( BBoptim(z, get_u_mc, get_grads_mc,
                                   control = list(gtol=1.e-8),
-                 ms=ms[1:(10^6/2^i)], bsMat=bsMat[1:(10^6/2^i),], np=np, k=k, rho=rho, sig=sig) )
-z <- opt2$par
-#proc.time() - ptm
-plot(xs[1:10^4], (bsMat %*% z)[1:10^4])
-}
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
 proc.time() - ptm
+
+z <- as.numeric(opt2$par)
+plot(xs[1:10^4], (bsMat %*% z)[1:10^4])
 ```
 
 Sample path optimisation seems to work well here - optimising over the first 10^4, 10^5 and 10^6 samples (taking the optimal as the next starting value) takes 16 + 32 + 165 = 213s = 3.6 mins; weheras going straight to 10^6 takes 1109s = 18.5 mins. The latter gets a slightly better objective, difference of 8.1e-08 (note that the algorithms relative tolerance was set to 1.0e-8).
@@ -523,14 +539,14 @@ get_u_cond <- function(thetas, ns, np, k, rho)
 {
   # Expected utility of main trial - note we have assumed rho > 0
   sig <- sqrt(thetas[,1]); ms <- thetas[,2]
-
-  # Calculate the critical value to give alpha = 0.025
-  c <- qnorm(1-0.025)
-  # Get resulting power
-  pows <- 1 - pnorm(c, ms/sqrt(2*sig^2/ns))
   
-  pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
+  
+  pows <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
+  
+  utils <- pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
     (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+  
+  utils
 }
 ```
 
@@ -670,11 +686,32 @@ points(xs[1:10^3], opt_ns, col="red")
 Mean and variance
 
 ```{r}
+get_u_cond <- function(thetas, ns, np, k, rho)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  sig <- sqrt(thetas[,1]); ms <- thetas[,2]
+  
+  pows <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
+  
+  utils <- pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+  
+  utils
+}
+```
+
+```{r}
+k <- get_ks(0.01, 0.2, 50)
+rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
+np <- 30
+
+thetas <- cbind(rinvgamma(10^6, shape=10, rate=1.5*(10-1)), rnorm(10^6, 0, 0.6))
+
 x1s <- sqrt(thetas[,1]*rchisq(10^6, df=2*np-1)/(2*np-1))
 x2s <- rnorm(10^6, thetas[,2], sqrt(2*thetas[,1]/np))
 
 # Set up basis functions
-knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 6)
+knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 10)
 bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
 
 knots2 <- seq(quantile(x2s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 10)
@@ -684,50 +721,59 @@ bsMat <- NULL
 for(i in 1:ncol(bsMat2)){
   bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
 }
+
+get_u_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% as.numeric(z)
+  pen <- -sum(ns[ns <= 0])*10^6
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho), na.rm = T)
+  u + pen
+}
 ```
 
 ```{r}
-z <- rep(10,140)
-
-ptm <- proc.time()
-for(i in 5:3){
-print(i)
-#ptm <- proc.time()
-opt2 <- suppressWarnings( nloptr(z, get_u_mc,
-                 opt = list("algorithm"="NLOPT_LN_SBPLX",
-                            "ftol_rel"=1.0e-4,
-                            "maxeval"=100000),
-                 thetas=thetas[1:(10^6/2^i),], bsMat=bsMat[1:(10^6/2^i),], np=np, k=k, rho=rho) )
-z <- opt2$solution
-#proc.time() - ptm
-plot(x2s[1:10^4], (bsMat %*% z)[1:10^4])
+get_grads_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% as.numeric(z)
+  sig <- sqrt(thetas[,1]); ms <- thetas[,2] 
+  
+  f <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
+  fd <- -dnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))*(-ms/(2*sqrt(2*ns*sig^2)))
+  g1 <- 1 - exp(-rho*(k[1]*ms + k[2]*(np + ns)))
+  g1d <- rho*k[2]*exp(-rho*(k[1]*ms + k[2]*(np + ns)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
+  
+  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  -(t(dfdn) %*% bsMat)/length(ns)
 }
-proc.time() - ptm
 
-df <- data.frame(s = x1s[1:10^4], m = x2s[1:10^4], n = (bsMat %*% z)[1:10^4])
-ggplot(df, aes(m, s, colour=n)) + geom_point() + scale_colour_gradientn(colours = terrain.colors(10)) +
-  geom_point(data=expand.grid(s=knots1, m=knots2, n=0), colour="black")
+# Check against numerical gradient
+gs1 <- get_grads_mc(z, thetas, bsMat, np, k, rho)
+gs2 <- grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho)
+plot(gs1, gs2)
+```
 
-
-
-
-z <- rep(10,140)
+```{r}
+z <- rep(10,14^2)
 
 ptm <- proc.time()
-for(i in 5:0){
-print(i)
-#ptm <- proc.time()
-opt2 <- suppressWarnings( BBoptim(z, get_u_mc,
-                                  #gr=get_u_mc,
-                                  control = list(gtol=1e-6),
-                 thetas=thetas[1:(10^6/2^i),], bsMat=bsMat[1:(10^6/2^i),], np=np, k=k, rho=rho) )
+opt2 <- suppressWarnings( BBoptim(par=z, fn=get_u_mc, gr=get_grads_mc,
+                                  control = list(gtol=1.e-8, checkGrad=F),
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho) )
 z <- opt2$par
-#proc.time() - ptm
-plot(x2s[1:10^4], (bsMat %*% z)[1:10^4])
-}
-proc.time() - ptm
+ns <- (bsMat %*% as.numeric(z))
 
-ns <- (bsMat %*% z)
+df <- data.frame(n=ns, x1=x1s, x2=x2s)
+```
+
+```{r}
+ggplot(df[1:10^4,], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
 ```
 
 ### Nested MC
