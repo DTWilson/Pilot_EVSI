@@ -630,8 +630,8 @@ get_grads_mc <- function(z, thetas, bsMat, np, k, rho)
 
 # Check against numerical gradient
 z <- rep(10,ncol(bsMat))
-plot(get_grads_mc(z, thetas, bsMat, np, k, rho),
-grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho) )
+plot(get_grads_mc(z, thetas[1:20,], bsMat[1:20,], np, k, rho),
+grad(get_u_mc, z, thetas=thetas[1:20,], bsMat=bsMat[1:20,], np=np, k=k, rho=rho) )
 ```
 
 ```{r}
@@ -650,6 +650,56 @@ df <- data.frame(x1=x1s, x2=x2s, n=ns)
 ggplot(df[1:10^4,], aes(x1, x2, colour=n)) + geom_jitter() + scale_colour_gradientn(colours = viridis(4)) +
   geom_point(data=expand.grid(x1=knots1, x2=knots2), colour="black")
 ```
+
+### Divide and conquer
+
+
+```{r}
+ns4 <- rep(-1,nrow(thetas))
+med1 <- median(x1s); med2 <- median(x2s)
+           
+ptm <- proc.time()
+for(i in 1:4){
+  if(i == 1){
+    sub <- which(x1s < med1 & x2s < med2)
+  } else if(i == 2){
+    sub <- which(x1s < med1 & x2s > med2)
+  } else if(i == 3){
+    sub <- which(x1s > med1 & x2s < med2)
+  } else {
+    sub <- which(x1s > med1 & x2s > med2)
+  }
+  
+  # Set up basis functions
+  knots1 <- quantile(x1s[sub], seq(0.01,0.99,l=8))
+  bsMat1 <- bSpline(x1s[sub], knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+  knots2 <- quantile(x2s[sub], seq(0.01,0.99,l=8))
+  bsMat2 <- bSpline(x2s[sub], knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
+  
+  bsMat <- NULL
+  for(i in 1:ncol(bsMat2)){
+    bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
+  }
+  
+  z <- rep(10, ncol(bsMat))
+  opt2 <- suppressWarnings( optim(z, get_u_mc, get_grads_mc, method="L-BFGS-B", control = list(trace = 3, pgtol=1e-8),
+              thetas=thetas[sub,], bsMat=bsMat, np=np, k=k, rho=rho) )
+
+  z <- opt2$par; n_sub <- bsMat %*% as.numeric(z)
+  ns4[sub] <- n_sub
+}
+proc.time() - ptm
+
+plot(ns4[1:1000], ns[1:1000])
+
+
+us1 <- get_u_cond(thetas, ns, np, k, rho); us4 <- get_u_cond(thetas, ns4*(ns4>0), np, k, rho)
+mean(us1); mean(us4); 
+(log(1-mean(us1)) - log(1-mean(us4)))/(rho*k[2])
+```
+
+### Dimension reduction
 
 We can also look at trying to reduce the dimensions of the prediction space, using a techinuqe like Likelihood Acquired Directions.
 
