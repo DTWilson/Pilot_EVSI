@@ -1,10 +1,9 @@
 ---
-title: "Calculating the expected utility of a pilot trial"
+title: "Optimising external pilot trials of complex interventions using Bayesian statistical decision theory"
 author: "Duncan T. Wilson"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   beamer_presentation: default
-  ioslides_presentation: default
 ---
 
 ```{r setup, include=FALSE}
@@ -16,30 +15,471 @@ require(BB)
 require(numDeriv)
 require(invgamma)
 require(RColorBrewer)
+require(fastGHQuad)
+require(nloptr)
+require(knitr)
+require(reshape2)
 cols <- brewer.pal(8, "Dark2")
 ```
 
+## Introduction
 
-# Introduction
 
-## Last time
+"What is the principal distinction between Bayesian and classical statistics? It is that Bayesian statistics
+is fundamentally **boring**. There is so little to do: *just specify the model and the prior, and turn the
+Bayesian handle*" - Philip Dawid
 
-We talked about a Bayesian solution to a frequentist trial design problem:
+## Introduction
+
+
+"What is the principal distinction between Bayesian and classical statistics? It is that Bayesian statistics
+is fundamentally **boring**. There is so little to do: *just specify the model and the prior and the utility, and turn the
+Bayesian handle*" - Philip Dawid
+
+We will consider how to apply the Bayesian decision-theoretic approach to problems of pilot trial design, considering first how we can define utility, and then how we do the handle turning.
+
+## Motivation
+
+
+```{r, include = T}
+df <- data.frame(a = seq(0,1,0.001))
+n <- 30
+
+df$b <- apply(df, 1, function(x) 1 - power.t.test(n=n, delta=0.5, sd=1.5, sig.level = x[1], alternative = "o")$power)
+
+p <- ggplot(df, aes(a,b)) + geom_line(size=1) +
+  scale_color_manual(values=c("black", "grey40")) +
+  coord_fixed() +
+  xlab(expression(paste("Type I error rate, ", alpha))) +
+  ylab(expression(paste("Type II error rate, ", beta))) +
+  theme_minimal() +
+  geom_point(data=df[df$a == 0.025,], colour=cols[1], size=3) +
+  geom_point(data=df[df$a == 0.6,], colour=cols[3], size=3) +
+  geom_point(data=df[df$a == 1,], colour=cols[2], size=3) +
+  scale_y_continuous(breaks=seq(0,1,0.2)) +
+  scale_x_continuous(breaks=seq(0,1,0.2)) +
+  theme(panel.grid.major = element_line(colour = "grey50")) +
+  theme(panel.grid.minor = element_line(colour = "grey80"))
+
+p
+
+# Assessing effectiveness in complex intervention pilot trials to improve efficiency
+# Testing not advised due to low power, an artefact of sharing the same endpoint and small pilot sample
+# Not testing at all is never optimal, and probably never done in practice - always have some implicit efficacy cut-off
+# How do we choose optimal pilot error rates?
+```
+
+## A massive over-simplification
+
+Suppose 
+
+```{r}
+p_n <- 0.8; p_a <- 1-p_n
+
+sub <- df[df$a %in% c(0.025, 0.6, 1),]
+sub$a2 <- 0.025; sub$b2 <- 0.1
+
+sub$tp <- p_a*(1-sub$b)*(1-sub$b2)
+sub$fp <- p_n*sub$a*sub$a2
+sub$tn <- p_n*((1-sub$a) + sub$a*(1-sub$a2))
+sub$fn <- p_a*(sub$b + (1-sub$b)*sub$b2)
+sub$En <- 2*30 + (sub$a*p_n + (1-sub$b)*p_a)*2*190
+```
+
+## Bayesian Statistical Decision Theory
+
+One way to define optimality is through Bayesian statistical decision theory. This assumes:
+
+i) We can represent our *beliefs* through a probability distribution, $p$;
+
+$$ 
+A \text{ more likely than } B \Leftrightarrow p(A) > p(B)
+$$
+
+ii) We can represent our *preferences* through a utility function, $U$;
+
+$$
+A \text{ is preferable to } B \Leftrightarrow E[u(A)] > E[u(B)]
+$$
+
+It is axiomatic that this $p$ and $u$ exist (for an individual). But, how do we find them?
+
+# Part 1 - Utilities
+
+## Problem
+
+Consider a two stage trial programme with an (external) pilot at stage $i = 1$ and a definitive trial at stage $i = 2$, with sample sizes $n_i$. We have a normally distributed primary outcome with known variance, and denote the sample mean difference by $x_i, i=1,2$.
+
+A frequentist analysis:
+
+- At stage 1, proceed to stage 2 if and only if $x_1 > d_1$;
+- At stage 2, recommend the intervention over the control if and only if $x_2 > d_2$.
+
+The design problem is then: optimise $(n_1, d_1, n_2, d_2)$.
+
+## Attributes
+
+To define our utility, we first need to choose a list of *attributes*: the things we have preferences about.
+
+i) The average change outcome in the popullation
+ii) The total sample size of the programme
+iii) Difference in treatment costs between intervention and control
+
+## Attributes [and assumtions]
+
+To define our utility, we first need to choose a list of *attributes*: the things we have preferences about.
+
+i) The average change outcome in the popullation [everyone will get the recommended treatment]
+ii) The total sample size of the programme [no trial set-up costs]
+iii) Difference in treatment costs between intervention and control [known and deterministic]
+
+Denote these attributes by $d, n$, and $c$.
+
+## Value
+
+A useful intermediate step between attributes and utility is *value*: preferences under certainty.
+
+$$
+(d, n, c) \text{ is preffered  to } (d', n', c') \Leftrightarrow v(d, n, c) > v(d', n', c')
+$$
+
+It is helpful to identify structure in our preferences. For example, we could say that
+$$
+v(d, n, c) = k_d v_d(d) + k_n v_n(n) + k_c v_c(c),
+$$
+i.e. the overall value is a weighted sum of three single-attribute value functions. 
+
+Q: When would this be reasonable to assume?
+
+A: Under *pairwise preferential independance*
+
+## Single-attribute value functions
+
+Under pairwise preferential independance, elicitation is now much simpler.
+
+$$
+v_d(d) = d, ~~ v_n(n) = n, ~~ v_c(c) = c.
+$$
+Note the implicit assumptions:
+
+- A change in attribute level from $d$ to $d + \Delta$ is independent of the starting level $d;
+- Likewise for attribute n.
+
+We are now left with determining the weights $k_d, k_n$ and $k_c$.
+
+## Weights
+
+We can scale everything to give $k_d + k_n + k_c = 1$. Then, we (at least) two questions:
+
+i) Specify a change in outcome, $bar{d}$ that would justify increasing the total sample size from 0 to some value $n^*$:
+$$
+(d = 0; n = 0; c = 1) \sim (d = \bar{d}; n = n^*; c = 1).
+$$
+ii) Specify a change in outcome $\hat{d}$ that would justify switching from the current standard treatment to the intervention under study:
+$$
+(d = 0; n; c = 1) \sim (d = \hat{d}; n; c = 0).
+$$
+
+We can then solve for the weights.
+
+## Utility
+
+Finally, we need to use our value function to obtain a utility function, which needs to represent **preferences under uncertainty**.
+
+Remarkably, it turns out that if we have an additive value function, then our utility must* take the form:
+
+$$
+u(d, n, c) =
+\begin{cases}
+1 - e^{-\rho v(d, n, c)}, &\rho > 0 \\
+v(d, n, c), &\rho = 0 \\
+-1 + e^{-\rho v(d, n, c)}, &\rho < 0 
+\end{cases},
+$$
+
+* We also require that one attribute is *utility independant* of the other two.
+
+Note:
+- All utility functions are value functions, but not vice versa.
+- Any additive utility function implies an additive value function and risk-neutrality.
+
+## Attitude to risk
+
+Utility elicitation is completed by determining $\rho \in \mathbb{R}$, which  represents our **attitude to risk**.
+
+We ask for a value $d^*$ such that we would be indifferent between the following:
+
+1. Obtaining $d^*$ with certainty;
+2. A gamble which will result in $d_{min}$ with probability 0.5 and $d_{max}$ with probability 0.5.
+
+That is, we find $d^*$ such that
+$$
+u(d^*, n, c) = 0:5 u(d_{min}, n, c) + 0:5 u(d_{max}, n, c),
+$$
+which we can solve for $\rho$. We will assume that we are risk-averse, giving $\rho > 0$.
+
+## Expected utility
+
+Let $G_i = 1$ if there is a positive test result at stage $i$, and $G_i = 0$ otherwise. Then the expected utility of a programme $z$, conditional on the true effect $\mu$, is
+$$
+\begin{split}
+E_{G_1, G_2, | \mu, z}[u(\mu, G_1, G_2 ~|~ z)] =& Pr[G_1 = 1, G_2 = 1  \mid \mu]\left(1-e^{\rho(k_d\mu + k_n(n_1+n_2)}\right) + \\
+& Pr[G_1 = 1,  G_2 = 0  \mid \mu] \left(1- e^{-\rho(k_n (n_1+n_2) + k_c)} \right) + \\
+& Pr[G_1 = 0 \mid \mu] \left( 1-e^{-\rho(k_n n_1 + k_c)} \right)
+\end{split}
+$$
+We can then integrate over the prior distribution for $\mu$:
+$$
+E[u(\mu, G_1, G_2 ~|~ z)] = \int E_{G_1, G_2, | \mu, z}[u(\mu, G_1, G_2 ~|~ z)] p(\mu) d\mu.
+$$
+
+```{r}
+#Note: 
+#- The probabilities are just power functions for the tests at each stage
+#- If we have a normal prior on $\mu$, we can integrate numerically using quadrature
+```
+
+## Application: OK-Diabetes
+
+- External pilot trial evaluating supported self-management for adults with learning disabilities and type II diabetes
+- Sample size of $n_1 = 30$ based on a rule-of-thumb
+- Asked by the funder to consider assessing the potential efficacy of the intervention, based on blood sugar levels
+- Sample size increased to $n_1 = 56$ participants per arm, giving 0:82 power to detect a true mean reduction of 0.5\% using a one-sided test with a type I error rate of 0.2
+
+## Application: OK-Diabetes
+
+- Cost of new intervention:
+$$
+(d = 0; n; c = 1) \sim (\hat{d} = 0.3; n; c = 0)
+$$
+
+- Cost of sampling:
+$$
+(d = 0; n = 0; c = 1) \sim (\bar{d} = 0.005; n = 50; c = 1)
+$$
+
+- Attitude to risk:
+$$
+u(d^* = 0.19, n, c) = 0.5 u(d_{min} = 0, n, c) + 0:5 u(d_{max} = 0.5, n, c)
+$$
+
+- Prior on true treatment difference:
+$$
+\mu \sim Normal, ~~ \mathbb{E}[\mu] = 0, ~~ Pr[\mu > 0.5] = 0.2
+$$
+
+## Application: OK-Diabetes
+
+
+```{r}
+get_ks <- function(d_bar, d_hat, n)
+{
+  k_d <- 1/(1 + d_hat - d_bar/n)
+  k_n <- -k_d*d_bar/n
+  k_c <- 1 - k_d - k_n
+  
+  return(c(k_d, k_n, k_c))
+}
+
+# Condition on mu first
+exp_u_mu <- function(mu, n1, d1, n2, d2, k, rho, mu_0, sd_0, sig)
+{
+  pow1 <- 1-pnorm(d1, mu, sqrt(2*sig^2/n1))
+  pow2 <- 1-pnorm(d2, mu, sqrt(2*sig^2/n2))
+  
+  su <- 0 # set_up
+  
+  if(rho > 0){
+    pow1*pow2*(1-exp(-rho*(k[1]*mu + k[2]*(n1+n2+su)))) +
+    pow1*(1-pow2)*(1-exp(-rho*(k[2]*(n1+n2+su) + k[3]))) +
+    (1-pow1)*(1-exp(-rho*(k[2]*n1 + k[3])))
+  } else if(rho < 0) {
+    pow1*pow2*(-1+exp(-rho*(k[1]*mu + k[2]*(n1+n2+su)))) +
+    pow1*(1-pow2)*(-1+exp(-rho*(k[2]*(n1+n2+su) + k[3]))) +
+    (1-pow1)*(-1+exp(-rho*(k[2]*n1 + k[3])))
+  } else {
+    pow1*pow2*(k[1]*mu + k[2]*(n1+n2+su)) +
+    pow1*(1-pow2)*(k[2]*(n1+n2+su) + k[3]) +
+    (1-pow1)*(k[2]*n1 + k[3])
+  }
+}
+
+# For example,
+d1 <- d2 <- 0.14
+n1 <- n2 <- 20
+mu_0 <- 0; sd_0 <- 0.6; sig <- 1.5
+rho <- 2; 
+d_bar <- 0.005; d_hat <- 0.3
+
+k <- get_ks(d_bar, d_hat, n=50)
+
+exp_u_mu(0.2, n1, d1, n2, d2, k, rho, mu_0, sd_0, sig)
+
+# We are then left with integrating out the $\mu$:
+
+# Set up the quadrature points and weights
+rule <- gaussHermiteData(100)
+rule$x <- rule$x*sqrt(2)*sd_0 + mu_0
+
+exp_u_joint <- function(x, k, rho, mu_0, sd_0, sig, rule, pen = FALSE)
+{
+  n1 <- x[1]; d1 <- x[2]; n2 <- x[3]; d2 <- x[4]
+  u <- ghQuad(f=exp_u_mu, rule=rule, n1=n1, d1=d1, n2=n2, d2=d2,
+         k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig)/sqrt(pi)
+
+  return(-u + pen*100*(n2<n1))
+}
+
+# For example,
+exp_u_joint(c(5, 0.01, 30, 0.12), k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig, rule=rule)
+
+mu_0 <- 0; sd_0 <- 0.6; sig <- 1.5; mu_1 <- 0.5
+rho <- 2; 
+d_bar <- 0.005; d_hat <- 0.3
+
+k <- get_ks(d_bar, d_hat, n=50)
+rule <- gaussHermiteData(100)
+rule$x <- rule$x*sqrt(2)*sd_0 + mu_0
+
+
+ptm <- proc.time()
+
+x <- c(100, 0, 100, 0)
+opt <- nloptr(x, exp_u_joint, 
+                lb = c(30,-40,0,-40), ub= c(1000,40,1000,40),
+                opt = list("algorithm"="NLOPT_GN_DIRECT", 
+                           "xtol_rel"=1.0e-7,
+                           "maxeval"=1000),
+                k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig, rule=rule, pen=T)
+  
+  x <- opt$solution
+  
+  opt <- nloptr(x, exp_u_joint,
+                lb = c(30,-40,0,-40), ub= c(1000,40,1000,40),
+                opt = list("algorithm"="NLOPT_LN_SBPLX",
+                           "xtol_rel"=1.0e-8,
+                           "maxeval"=5000),
+                k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig, rule=rule, pen=T)
+proc.time() - ptm
+
+x <- opt$solution
+
+r1 <- c(x, 
+         1 - pnorm(x[2]/sqrt(2*(sig^2)/x[1])),
+         pnorm(x[2], mu_1, sqrt(2*sig^2/x[1])),
+         1 - pnorm(x[4]/sqrt(2*(sig^2)/x[3])),
+         pnorm(x[4], mu_1, sqrt(2*sig^2/x[3])),
+        opt$objective)
+r1
+
+# Force a type I of 1 by constraining to low d_1
+x <- c(100, -39, 100, 0)
+opt <- nloptr(x, exp_u_joint, #eval_grad_f = exp_u_joint_grad,
+                lb = c(30,-40,0,-40), ub= c(1000,-39,1000,40),
+                opt = list("algorithm"="NLOPT_GN_DIRECT",  #"NLOPT_GD_STOGO",
+                           "xtol_rel"=1.0e-7,
+                           "maxeval"=1000),
+                k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig, rule=rule, pen=F)
+  
+  x <- opt$solution
+  
+  opt <- nloptr(x, exp_u_joint,
+                lb = c(30,-40,0,-40), ub= c(1000,-39,1000,40),
+                opt = list("algorithm"="NLOPT_LN_SBPLX",
+                           "xtol_rel"=1.0e-8,
+                           "maxeval"=5000),
+                k=k, rho=rho, mu_0=mu_0, sd_0=sd_0, sig=sig, rule=rule, pen=F)
+
+x <- opt$solution
+
+r2 <- c(x, 
+         1 - pnorm(x[2]/sqrt(2*(sig^2)/x[1])),
+         pnorm(x[2], mu_1, sqrt(2*sig^2/x[1])),
+         1 - pnorm(x[4]/sqrt(2*(sig^2)/x[3])),
+         pnorm(x[4], mu_1, sqrt(2*sig^2/x[3])),
+        opt$objective)
+r2
+ 
+tab <- as.data.frame(rbind(r1, r2))
+
+tab <- data.frame(pr = c("Unrestricted", "No pilot test"),
+                  n_1=round(tab[,1]), n_2=round(tab[,3]),
+                  a_1 = round(tab[,5], 2), p_1 = round(tab[,6], 3),
+                  a_2 = round(tab[,7], 3), p_2 = round(tab[,8], 3),
+                  u = round(tab[,9], 5)
+                   )
+colnames(tab) <- c("Problem", "$n_1$", "$n_2$", "$\\alpha_1$", "$\\beta_1$", "$\\alpha_2$", "$\\beta_2$", "Expected utility")
+```
+
+Compare the optimal designs under two strategies:
+
+- Unrestricted: optimising over $\alpha_1, \beta_1, \alpha_2, \beta_2$
+- No pilot test: optimising over $\alpha_2, \beta_2$ subject to $\alpha_1 = 1, n_1 = 30$
+
+```{r, include = T}
+kable(tab)
+```
+
+Note: the 0.00582 difference in expected utility approximately equals the cost of recruiting 66 participants.
+
+## Evaluation
+
+How do optimal designs vary with utility function parameters? Consider varying the attitude to risk, $\rho$:
+
+
+
+```{r, include=T}
+df <- readRDS("../../../Opt_pilot_ocs/data/opt_joint_np30.Rda")
+
+df2 <- df[df$d_bar == 0.005 & df$d_hat == 0.3,]
+df2$n1 <- df2$n1/500; df2$n2 <- df2$n2/500; 
+df2 <- melt(df2, id.vars = c("rho", "d_bar", "d_hat"))
+df2 <- cbind(df2[substr(df2$variable,2,2) == "1",], df2[substr(df2$variable,2,2) == "2",4:5])
+names(df2)[4:7] <- c("t1", "v1", "t2", "v2")
+df2 <- melt(df2, id.vars = c("rho", "d_bar", "d_hat", "t1", "t2"))
+df2 <- df2[,c(1,2,3,4,6,7)]
+df2$t1 <- substr(df2$t1,1,1)
+df2$variable <- substr(df2$variable,2,2)
+names(df2) <- c("rho", "d_bar", "d_hat", "var", "trial", "val")
+
+ggplot(df2[df2$var %in% c("a", "b", "n"),], aes(rho, val, colour=trial, linetype=var))  + 
+  geom_line() +
+  theme_minimal() +
+  scale_colour_manual(values=cols) +
+  scale_y_continuous(breaks=seq(0,1,0.2)) +
+  xlab(expression(paste("Attitude to risk, ", rho))) +
+  ylab("Value") +
+  labs(colour = "Stage", linetype = "Variable") +
+  theme(panel.spacing = unit(2, "lines"), legend.position="bottom") +
+  scale_linetype_manual(values=c(1,2,3), labels=c(expression(alpha), expression(1-beta), "n/500"))
+```
+
+
+## Extensions
+
+- Internal pilot
+- More complex designs and models, e.g. unknown variance or binary outcome
+- More complex utilities, e.g. more attributes
+
+# Part 2 - Computations
+
+## Re-cap
+
+We have seen Bayesian solution to a frequentist trial design problem:
  
 - External pilot trial followed by a definitive trial
 - Both trials to be analysed using a hypothesis test
 - Needed to choose type I and II error rates $\alpha_i, \beta_i, i=1,2$ at each stage
 - Proposed to choose the rates which maximised expected utility, w.r.t. a prior distribution
 
-We focussed on how to choose an appropriate utility function.
-
+We have focussed so far on how to choose an appropriate utility function.
 
 ## A Bayesian approach
 
 Rather than making a stop/go decision at the pilot stage through a frequentist hypothesis test, we could instead do a Bayesian decision-theoretic analysis:
 
 - Given pilot data $x_1$, get the posterior $\mu | x_1$
-- Choose $\alpha_2, \beta_2$ to maximise expected utility w.r.t. this posterior
+- Choose $\alpha_2, \beta_2$ to maximise expected utility with respect to this posterior
 
 With this analysis in mind, how large should the pilot trial be?
 
@@ -48,7 +488,7 @@ To simplify:
 - Fix $\alpha_2 = 0.025$, so just need to choose $\beta_2$ or, equivalently, the definitive sample size $n_2$
 - Assume the pilot data can be summarised in a single sufficient statistic (e.g. a sample mean)
 
-## Notation
+## Notation re-cap
 
 $\mu$: unknown parameter(s) of interest, with prior $p(\mu)$
 
@@ -81,8 +521,6 @@ Find optimal pilot sample size $n_1$:
 $$
 \max_{n_1} \Bigg[~~~  ~\mathbb{E}_{x_1 | n_1} \Big(~~~ \max_{n_2} ~\mathbb{E}_{\mu, x_2 | x_1, n_1}\big[u(\mu, n_1, n_2. x_2)\big] ~~~\Big) ~~~\Bigg]
 $$
-
-# Computation
 
 ## Two-level nested Monte Carlo
 
@@ -123,7 +561,7 @@ $$
 \end{aligned}
 $$
 
-## Single-level MC
+## Single-level Monte Carlo
 
 We now have something we can estimate in a single-level Monte Carlo scheme:
 $$
@@ -285,16 +723,7 @@ An algorithm for estimating the expected utility of a pilot trial with sample si
 
 Note that we use the same sample from $p(\mu, x_1 | n_1)$ at each iteration.
 
-# Application
-
-## OK-Diabetes
-
-- Two-arm parallel group pilot and definitive trials, normally distributed primary outcome
-- Known outcome variance
-- Unknown parameter $\mu$: mean difference, with (conjugate) normal prior
-- Utility function from last time (based on change in outcome, total sample size, and treatment costs of the intervention)
-
-## Derivatives
+## Application: OK-Diabetes
 
 The function we are maximising is:
 $$
@@ -310,13 +739,13 @@ pow(n) = \Phi\left(z_{1-\alpha/2} - \frac{\mu}{\sqrt(2\sigma^2/n)} \right).
 $$
 We can get the derivative of this function with respect to the vector $\mathbf{a}$ - helps dramaticaly with optimisation.
 
-## Comparisons
+## Application: OK-Diabetes
 
 In this case (normal outcome, known variance, conjgate prior) we can get an exact expression for the expected utility of the definitive trial.
 
 So, no need for MCMC sampling or numerical integration for the inner expectation $\rightarrow$ a more accurate answer.
 
-## Application
+## Application: OK-Diabetes
 
 ```{r}
 get_ks <- function(d_bar, d_hat, n)
@@ -600,157 +1029,3 @@ We can now quickly calculate and maximise the expected utility of pilot trials, 
 - If 2 dimensions, need derivatives of objective function
 - Need an analyticpower function for the definitive trial
 - How can we be sure of converegnce to true global optimum?
-
-
-```{r} 
-knitr::knit_exit()
-```
-
-# Seminar
-
-
-
-
-## Introduction
-
-"What is the principal distinction between Bayesian and classical statistics? It is that Bayesian statistics
-is fundamentally boring. There is so little to do: just specify the model and the prior, and turn the
-Bayesian handle" - Phil Dawid [Lindley2000]
-
-Not just prior and model, but utility, and we can make any decision optimally.
-
-Two major challenges in practice:
-- specifying a utility (assuming model and prior are correct)
-- doing the calculations
-
-We will consider a specific problem in clinical trial design, and attempt to say something interesting about each of these challenges.
-
-### Motivation
-
-- Assessing effectiveness in complex intervention pilot trials to improve efficiency
-- Testing not advised due to low power, an artefact of sharing the same endpoint and small pilot sample
-- Not testing at all is never optimal, and probably never done in practice
-- How do we choose optimal pilot error rates?
-
-### BSDT
-
-- Provides one way to define optimality
-- (assume model and prior are given)
-- utility and computations
-
-## Part 1
-
-### Problem
-
-- Pilot and definitive trial, shared normal endpoint, known variance, unknown effect, two-arm etc.
-- Normal conjgate prior on effect
-- Make progression decision at each stage using a z-test of means
-- Programme design defined by ns and cs at each stage
-
-### Optimisation
-
-- Search over the four parameters to maximise expected utility
-
-### MEU theory
-
-- Doing MEU is not a hueristic, but axiomatic
-- Given some basic axioms about our preferences and how we want to behave (coherence), there exists a utility function s.t. preferences between distributions is encoded by its expectation
-- Need to be able to find this specific utility, which means asking the right questions
-- Contrast with ad-hoc "utilities", e.g. Thall
-
-### Attributes
-
-- First need to identify the things that we have preferences about
-- Average change in outcome in the population
-- Sample size at each stage
-- "treatment costs" (known and deterministic)
-- Attribute space
-
-### Value
-
-- Preferences in the attribute space under certainty
-- Complete and transitive
-- Looking for a value function which encodes preferences
-- Introduce some structure, sum of single attribute functions (equivalent to assuming mutal preferential independance)
-- More stucture, linearity in each single attribute function (implications)
-- Need to dtermine three parameters, scaled, so two questions
-
-### Utility
-
-- Preference in the attribute space under uncertainty, so preferences over distributions
-- All utility functions are value functions (just apply to degnerative dists), but not the converse
-- Make an assumption that one attribute is utility independant of the other two (implications)
-- Handy result, utility function must have exponential form, just one more parameter desribing risk attitude, one more question to elicit
-- Note any additive utility implies all the above and risk-neutraility, and almost all utilities in the literature are additive
-
-### Expected utility
-
-- Condition on effect, closed form if we have a power function
-- Integrate out effect, fast G-H quadrature since normal prior
-
-### Application - OK-Diabetes
-
-- Guess prior and utility parameters
-- Compare optimal design with one constrained to not test in pilot
-- sensitivity to prior and utility parameters
-
-### Evaluation
-
-- Optimal programmes for a range of utilities
-- Testing in the pilot always optimal, but generally with high type I rate
-- If we are sufficiently risk seeking, reduce to one stage design
-
-### Extensions
-
-- Internal pilot
-- More complex designs and models, e.g. unknown variance or binary outcome
-- More complex utilities, e.g. more attributes
-
-## Part 2
-
-### Problem
-
-- If we have set up our utility, we can analyse the pilot through MEU
-- Assume definitive type I set at default
-- Now just need to choose the pilot sample size
-
-### Nested MC algorithm
-
-- Simple
-- Computationally demanding
-- Automating Bayesain inference without checks
-
-### Surrogate decision rules
-
-- Re-casting the problem as searching over rules mapping pilot data to definitive sample sizes
-- Need a way to represent functions and search over them
-
-### Splines
-
-- Defined by their order and their knots
-- Some example functions for a given set of knots
-- Basis function representation
-
-### Optimisation
-
-- Add stop/go component
-- incorportae a search over pilot n
-
-### Application - OK-Diabetes
-
-- Semi-analytic solution
-- Nested MC
-- Surrogate decision rules
-
-### Limitations and alternatives
-
-- EVSI (including regression based) focussed on few decisions
-- GAM approach limited to one or two dimensions of pilot sample space
-- Moment matching might be better, artificually restricting set of decisions
-
-### Extensions
-
-- Optimising defnitive trial alpha
-- Internal pilots
-- More complex designs and models, e.g. unknown variance or binary outcome
-- More complex utilities, e.g. more attributes

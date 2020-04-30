@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-require(DiceKriging)
+require(mgcv)
 require(splines2)
 require(ggplot2)
 require(invgamma)
@@ -16,6 +16,9 @@ require(BB)
 require(rstan)
 require(shinystan)
 require(viridis)
+require(numDeriv)
+require(RColorBrewer)
+cols <- brewer.pal(8, "Dark2")
 ```
 
 ## Introduction
@@ -70,16 +73,16 @@ knots <- seq(0.1,0.9,l=10)
 # Basis function values at points x
 # rows correspond to points
 # columns are the individual basis functions (of which we have # knots + # degrees) 
-bsMat <- bSpline(x, knots = knots, degree = 3) # using degree = 3 for cubic splines
+bsMat <- bSpline(x, knots = knots, degree = 3, intercept=T) # using degree = 3 for cubic splines
 # For example, the 3rd basis function;
-plot(x, bsMat[,3])
+plot(x, bsMat[,1])
 
 # Given our basis functions, we can then build splines of the same degree and over the same knots
 # as linear combinations of these. For example,
-a <- rnorm(10+3) # some random coefficients
-plot(x, bsMat %*% rnorm(10+3))
-points(x, bsMat %*% rnorm(10+3), col = "red")
-points(x, bsMat %*% rnorm(10+3), col = "green")
+a <- rnorm(4) # some random coefficients
+plot(x, bsMat %*% rnorm(4))
+points(x, bsMat %*% rnorm(4), col = "red")
+points(x, bsMat %*% rnorm(4), col = "green")
 ```
  
 Note that having distint knots, as we do above, means that the first n-1 derivatives of the polynomial pieces are contiinuous across each knot. If we want to decrease this smoothness at a knot, we can add another knot at the same place to get continuity in the first n-2 derivatives, etc.
@@ -97,6 +100,7 @@ $$
 
 We extend the example used in `opt_pilot_ocs`, where we have a single continuous normal effectiveness endpoint with known variance but unknown true mean difference, and have a utlity that includes change in effectiveness, sampling costs, and treatment / implementation costs. Initialising parameters:
 
+
 ```{r}
 get_ks <- function(d_bar, d_hat, n)
 {
@@ -107,15 +111,14 @@ get_ks <- function(d_bar, d_hat, n)
   return(c(k_d, k_n, k_c))
 }
 
-k <- get_ks(0.01, 0.2, 50)
+k <- get_ks(0.005, 0.3, 50)
 rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
 np <- 30
 ```
 
-We start by simulating from $(\theta, x_1)$:
 
 ```{r}
-M <- 10^4
+M <- 10^6
 thetas <- rnorm(M, mu_0, sd_0)
 xs <- rnorm(M, thetas, sqrt(2*sig^2/np))
 ```
@@ -124,15 +127,13 @@ xs <- rnorm(M, thetas, sqrt(2*sig^2/np))
 get_u_cond <- function(thetas, ns, np, k, rho, sig)
 {
   # Expected utility of main trial - note we have assumed rho > 0
-  t <- 1
-  #t <- ns >= 2
-  #ns <- abs(ns)
-
-  pows <- 1-pnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))
   
-  utils <- t*(pows*(1-exp(-rho*(k[1]*thetas + k[2]*(ns+np)))) +
-    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))) +
-    (!t)*(1-exp(-rho*(k[2]*(np) + k[3])))
+  # Get power
+  pows <- 1-pnorm(qnorm(1-0.025) - sqrt(ns)*thetas/sqrt(2*sig^2))
+  pows <- pows*(ns > 0)
+  
+  utils <- pows*(1-exp(-rho*(k[1]*thetas + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
   
   utils
 }
@@ -140,28 +141,31 @@ get_u_cond <- function(thetas, ns, np, k, rho, sig)
 
 ```{r}
 # Set up basis functions
-knots <- seq(quantile(xs, c(0.01, 0.99))[1], quantile(xs, c(0.01, 0.99))[2], l = 10)
-#knots <- quantile(xs, seq(0.05,0.95,l=10))
+#knots <- seq(quantile(xs, c(0.01, 0.99))[1], quantile(xs, c(0.01, 0.99))[2], l = 8)
+knots <- quantile(xs, seq(0,1,l=8))
 bsMat <- bSpline(xs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
 
 get_u_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
 {
-  ns <- bsMat %*% z[1:14]
-  #ns <- (xs > z[15])*ns
+  # Get sample sizes from decision rule
+  ns <- bsMat %*% as.numeric(z) 
+  ns <- ns + (ns < 0)*(-ns + 1)
+  # Penalty for negative sample size
   pen <- -sum(ns[ns < 0])*100000
+  
   # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
   # expected utilities
-  u <- -mean(get_u_cond(thetas, ns, np, k, rho, sig))#, na.rm=T)
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho, sig))
   u + pen
 }
-```
 
-Get derivatives:
+```
 
 ```{r}
 get_grads_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
 {
-  ns <- bsMat %*% z
+  ns <- bsMat %*% as.numeric(z)
+  ns <- ns + (ns < 0)*(-ns + 1)
   
   f <- 1-pnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))
   fd <- -dnorm(qnorm(1-0.025) - thetas/sqrt(2*sig^2/ns))*(-thetas/(2*sqrt(2*ns*sig^2)))
@@ -176,60 +180,53 @@ get_grads_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
 }
 
 # Check against numerical gradient
+z <- rep(1,12)
 get_grads_mc(z, thetas[1], bsMat[1,], xs, np, k, rho, sig)
 grad(get_u_mc, z, thetas=thetas[1], bsMat=bsMat[1,], np=np, k=k, rho=rho, sig=sig)
 ```
 
-Finally, we can optimise:
-
 ```{r}
-z <- c(rep(10,14))#, 0)
-
-ptm <- proc.time()
-for(i in 8:4){
-print(i)
+# Note - BBoptim might be useful for larger problems, but L-BFGS-B is faster here
+#z <- rep(1,ncol(bsMat))
 #ptm <- proc.time()
-opt <- suppressWarnings( nloptr(z, get_u_mc,
-                 opt = list("algorithm"="NLOPT_LN_SBPLX",
-                            "ftol_rel"=1.0e-8,
-                            "maxeval"=100000),
-                 lb = rep(-1,14), ub = rep(Inf,14),
-                 #lb = c(rep(-1,14),-3), ub = c(rep(Inf,14),3),
-                 thetas=thetas[1:(M/2^i)], bsMat=bsMat[1:(M/2^i),], xs=xs[1:(M/2^i)],
-                 np=np, k=k, rho=rho, sig=sig) )
-z <- opt$solution
+#opt2 <- suppressWarnings( BBoptim(z, get_u_mc, get_grads_mc,
+#                                  control = list(gtol=1.e-8, checkGrad=F),
+#                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
+#proc.time() - ptm
 
-ns <- bsMat %*% z[1:14]
-#ns <- ifelse(xs < z[15], 0, ns)
-
-plot(xs[1:10^4], ns[1:10^4])
-
-}
-proc.time() - ptm
-
-
-
-z <- rep(10,14)
-
+z <- rep(1,ncol(bsMat))
 ptm <- proc.time()
-opt2 <- suppressWarnings( BBoptim(z, get_u_mc, get_grads_mc,
-                                  control = list(gtol=1.e-8),
-                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
+opt4 <- optim(z, get_u_mc, get_grads_mc, method="L-BFGS-B", control = list(trace = 3, pgtol=1e-8),
+              thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig)
+z <- opt4$par
 proc.time() - ptm
 
-z <- as.numeric(opt2$par)
-plot(xs[1:10^4], (bsMat %*% z)[1:10^4])
+z <- opt2$par; ns1 <- bsMat %*% as.numeric(z)
 ```
 
-Sample path optimisation seems to work well here - optimising over the first 10^4, 10^5 and 10^6 samples (taking the optimal as the next starting value) takes 16 + 32 + 165 = 213s = 3.6 mins; weheras going straight to 10^6 takes 1109s = 18.5 mins. The latter gets a slightly better objective, difference of 8.1e-08 (note that the algorithms relative tolerance was set to 1.0e-8).
+This gives an optimal sample size assuming a type I error rate of 0.025. We want to augment this, searching for a critical value below which the optimal decision to to not run a defnitive trial at all
 
-### Regression tree
+```{r}
+opt_cutoff <- function(x, z, xs)
+{
+  # Get sample sizes from decision rule
+  ns <- bsMat %*% as.numeric(z)
+  
+  # Apply the cutoff at x
+  to_cut <- which(xs < x)
+  ns[to_cut] <- 0
 
-Rather than searching over a space of smooth functions, can we instead try to find a regression tree which maximises expected utility?
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho, sig))
+  u
+}
 
-Not really. Although a tree model can do well over a high dimension space (hence would be useful here), we do not search over a space of trees iteratively when using them to fit models to data. They are generated using a greedy heuristic, which relies on having a simple way to determine the value of leaves for a given tree - they are just the mean of the data values in that partition.
+cut_off <- optim(0, opt_cutoff, lower=min(xs), upper=max(xs), z=z, xs=xs, method="Brent")$par
+ns1[xs < cut_off] <- 0
+```
 
-### Semi-analytic coparison
+### Semi-analytic comparison
 
 For comparison, we can use the conjugate normal prior to update to an exact posterior, and use our exact expression for the expected utility of a definitive trial with respect to this to get optimal ns.
 
@@ -264,68 +261,110 @@ ns2 <- NULL; ds2 <- NULL
 for(m in pms[1:M]){
   suppressWarnings( opt <- optim(c(1), exp_u, np=np, k=k, rho=rho, m=m, s=sqrt(var_1), sig=sig, method="L-BFGS-B",
              lower=c(0.001), upper=c(600)) )
-  #if(-(1 - exp(-rho*(k[2]*np + k[3]))) < opt$value){
-  #  n <- 0
-  #} else {
+  if(-(1 - exp(-rho*(k[2]*np + k[3]))) < opt$value){
+    n <- 0
+  } else {
     n <- opt$par
-  #}
+  }
   ns2 <- c(ns2, n)
 }
 proc.time() - ptm
 ```
 
-Even though we have a conjugate prior and an exact expression for expected utility of the definitive trial, this procedure (where we need to solve an optimisation problem for each sample in the outer loop) takes much longer than the proposed method - it takes 22.3 mins, compared with 6.5.
+Even though we have a conjugate prior and an exact expression for expected utility of the definitive trial, this procedure (where we need to solve an optimisation problem for each sample in the outer loop) takes much longer than the proposed method - it takes 67s, compared with 8s.
 
 Plot the optimal decision rule on top of our approximation, and contrast their EVSI estimates:
-
 ```{r}
-ns <- bsMat %*% z[1:14]
-#ns <- (xs > z[15])*ns
+us1 <- get_u_cond(thetas, ns1, np, k, rho, sig); us2 <- get_u_cond(thetas, ns2, np, k, rho, sig)
+mean(us1); mean(us2); 
+(log(1-mean(us1)) - log(1-mean(us2)))/(rho*k[2])
 
-us <- get_u_cond(thetas, ns, np, k, rho, sig); us2 <- get_u_cond(thetas, ns2, np, k, rho, sig)
-mean(us); mean(us2); 
-(log(1-mean(us)) - log(1-mean(us2)))/(rho*k[2])
-
-plot(xs[1:10^3], ns[1:10^3],)
-points(xs[1:10^3], ns2[1:10^3], col="red")
+df2 <- data.frame(x=rep(xs[1:10^3], 2), n=c(ns1[1:10^3], ns2[1:10^3]), t=rep(c("Surrogate", "Nested"), each=10^3))
 ```
 
-We see that the surrogate decision rule almost exactly matches the true optimal rule. The difference in expected utility, when translated back to differences in sample size, corresponds to only 0.005 participants.
+We see that not only does it take longer, it actually gives a very marginaly worse utility. This may be due to some failings in the inner optimisations. But, the two methods produce essentially the same mappings from pilot data to definitive samle sizes:
+
+```{r, include=T}
+ggplot(df2, aes(x, n, colour=t)) + geom_line() +
+  scale_color_manual(values=cols[1:2], name="Method") +
+  theme_minimal() +
+  ylab("Sample size") + xlab("Pilot data") + geom_rug(sides="b", alpha=0.3)  
+```
 
 ### NP regression
+
+Another approach we can compare against is the EVSI method of Strong et al. (2015). This method involves constructing a non-parametric regression model for each possibly decision, with the models predicting expected utility given the pilot data $x$. For each decision, we then use the average regression prediction over the simulated $x$s to estimate expected utility, and then choose the decision which gives the maximum.
 
 ```{r}
 ptm <- proc.time()
 
-zs <- seq(0,250,10)
+# list the decisions to be cycled through
+zs <- seq(1,251,100)
 preds <- NULL
 for(n in zs){
   print(n)
+  # For each decision, get the utilities
   us <- get_u_cond(thetas, ns=n, np, k, rho, sig)
   df <- data.frame(x=xs, u=us)
 
+  # Fit the NP regression model
   fit <- gam(u ~ s(x), data=df)
-  #plot(xs[1:1000], predict(fit)[1:1000])
+  # Get a vector of predictions from the model and add to a matrix
   preds <- cbind(preds, predict(fit, newdata=df[,1,drop=F]))
 }
 
+# For each simulated instance, choose the n which gives largest expected utility
 ns3 <- zs[apply(preds, 1, which.max)]
 
 proc.time() - ptm
 ```
 
 ```{r}
-us <- get_u_cond(thetas, ns, np, k, rho, sig); us2 <- get_u_cond(thetas, ns2, np, k, rho, sig)
-us3 <- get_u_cond(thetas, ns3, np, k, rho, sig)
-mean(us); mean(us2); mean(us3); 
-(log(1-mean(us)) - log(1-mean(us2)))/(rho*k[2]); (log(1-mean(us)) - log(1-mean(us3)))/(rho*k[2])
+us1 <- get_u_cond(thetas, ns1, np, k, rho, sig); us3 <- get_u_cond(thetas, ns3, np, k, rho, sig)
+mean(us1); mean(us3); 
+(log(1-mean(us1)) - log(1-mean(us3)))/(rho*k[2])
 
-plot(xs[1:10^3], ns[1:10^3],)
-points(xs[1:10^3], ns2[1:10^3], col="red")
-points(xs[1:10^3], ns3[1:10^3], col="green")
+#df3 <- rbind(df2, data.frame(x=xs[1:10^3], n=ns3[1:10^3], t=rep("Regression", 10^3)))
 ```
 
-This is picking up on the fact that only for exaclty n1 = 0 do we get a outcome of power = 0 and alpha = 0. This gets picked up by the NP regression method, but not by the other methods - they can look at very small n (< 1), but these still give an alpha = power = 0.025. So, change the way we calculate the utility to allow for n < 1 (or 2?) to lead to a 0 power trial.
+Computation time: 9s (surrogate), 66s (nested), 2123s [35mins] (regression).
+
+```{r, include=T}
+ggplot(df3, aes(x, n, colour=t)) + geom_line() +
+  scale_color_manual(values=cols, name="Method") +
+  theme_minimal() +
+  ylab("Sample size") + xlab("Pilot data") + geom_rug(sides="b", alpha=0.3, colour="grey70") 
+```
+
+### Divide and conquer
+
+As we will see, when dealing with a higher dimension sample space the optimisation approach can struggle, with the dimensions in its solutions space increasing exponentialy. One potential way round this is to partition the sample space and solve a number of small, independant optimisations. In this problem, we can take the same set of knots and locally within each section find the optimal cubic polynomial.
+
+```{r}
+ns4 <- rep(-1,length(xs))
+ptm <- proc.time()
+for(i in 1:(length(knots)-1)){
+  sub <- which(xs > knots[i] & xs < knots[i+1])
+  bsMat <- bSpline(xs[sub], knots=NULL, degree = 3, intercept = T) # using degree = 3 for cubic splines
+  
+  z <- rep(1, ncol(bsMat))
+  opt2 <- suppressWarnings( optim(z, get_u_mc, get_grads_mc, method="L-BFGS-B", control = list(trace = 3, pgtol=1e-8),
+              thetas=thetas[sub], bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
+
+  z <- opt2$par; n_sub <- bsMat %*% as.numeric(z)
+  ns4[sub] <- n_sub
+}
+proc.time() - ptm
+
+plot(xs[1:1000], ns1[1:1000])
+points(xs[1:1000], ns4[1:1000], col="red")
+
+us1 <- get_u_cond(thetas, ns1, np, k, rho, sig); us4 <- get_u_cond(thetas, ns4, np, k, rho, sig)
+mean(us1); mean(us4); 
+(log(1-mean(us1)) - log(1-mean(us4)))/(rho*k[2])
+```
+
+
 
 ### Nested MC comparison
 
@@ -396,7 +435,7 @@ for(i in 2:50){
   xs <- cbind(xs, ((i-1)*xs[,i-1] + rnorm(M, thetas, sqrt(2*sig^2)))/i)
 }
 # Set knots
-knots <- seq(quantile(xs, c(0.05, 0.95))[1], quantile(xs, c(0.05, 0.95))[2], l = 10)
+knots <- seq(quantile(xs, c(0.05, 0.95))[1], quantile(xs, c(0.05, 0.95))[2], l = 8)
 # Now get corresponding b spline matrices
 bsMats <- list()
 for(i in 1:50){
@@ -430,7 +469,38 @@ get_u_mc_opt <- function(z, thetas, bsMats, np, k, rho, sig)
 And optimise; 
 
 ```{r}
-z <- rep(10,15)
+z <- rep(1,13)
+ptm <- proc.time()
+opt2 <- suppressWarnings( BBoptim(z, get_u_mc, #get_grads_mc,
+                                  lower = c(rep(-Inf,14), 1), upper = c(rep(Inf,14), 49.9),
+                                  control = list(gtol=1.e-8, checkGrad=F),
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
+proc.time() - ptm
+
+z <- opt2$par; ns1 <- bsMat %*% as.numeric(z)
+
+opt_cutoff <- function(x, z, xs)
+{
+  # Get sample sizes from decision rule
+  ns <- bsMat %*% as.numeric(z)
+  
+  # Apply the cutoff at x
+  to_cut <- which(xs < x)
+  ns[to_cut] <- 0
+
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho, sig))
+  u
+}
+
+cut_off <- optim(0, opt_cutoff, lower=min(xs), upper=max(xs), z=z, xs=xs, method="Brent")$par
+ns1[xs < cut_off] <- 0
+```
+
+
+```{r}
+z <- rep(10,12)
 
 ptm <- proc.time()
 for(i in 8:0){
@@ -474,7 +544,441 @@ proc.time() - ptm
 plot(15:25,us)
 ```
 
-We won't compare the nexted MC approach here. To use it, we would estimate the EVSI for a range of values of $n_p$
+We won't compare the nexted MC approach here. To use it, we would estimate the EVSI for a range of values of $n_p$. Similarly for the regression approach. So, we know these will scale linearly in the number of candidate $n_p$s.
+
+
+## Example 2
+
+Suppose we have a binary outcome. Probability of an event in control and intervention arms is $p_c, p_I$. We are interested in the absolute difference $d = p_C - p_I$. This is what goes into our utility function. We have a Beta prior on the control rate, and a normal prior on the log of the odds ratio. We don't have a closed form expression for the posterior of the absolute difference, so need to sample from it via MCMC or use our method.
+
+
+```{r}
+k <- get_ks(0.001, 0.05, 50)
+rho <- 2
+np <- 30
+
+M <- 10^5
+thetas <- cbind(rbeta(M, 15, 85),
+                exp(rnorm(M, -0.5, 1/sqrt(2))))
+y <- log(thetas[,1]/(1-thetas[,1])) + log(thetas[,2])
+thetas <- cbind(thetas, exp(y)/(exp(y) + 1))
+
+x1s <- rbinom(M, np, thetas[,1])/np
+x2s <- rbinom(M, np, thetas[,3])/np
+
+# Set up basis functions
+knots1 <- seq(min(x1s)+1/np, max(x1s)-1/np, l = 8)
+knots1 <- quantile(x1s, seq(0.01,0.99,l=8))
+bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+knots2 <- seq(min(x2s)+1/np, max(x2s)-1/np, l = 8)
+knots2 <- quantile(x2s, seq(0.01,0.99,l=8))
+bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+bsMat <- NULL
+for(i in 1:ncol(bsMat2)){
+  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
+}
+
+get_u_cond <- function(thetas, ns, np, k, rho)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  p1 <- thetas[,1]; p2 <- thetas[,3]; ds <- p1 - p2
+  
+  pows <- 1 - pnorm(qnorm(0.975) - sqrt(ns)*ds/sqrt(p1*(1-p1) + p2*(1-p2)))
+  
+  pows*(1-exp(-rho*(k[1]*ds + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+}
+
+get_u_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% z
+  pen <- -sum(ns[ns <= 0])*10^6
+  ns <- ns + (ns < 0)*(-ns + 1)
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho), na.rm=T)
+  u + pen
+}
+```
+
+```{r}
+get_grads_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% as.numeric(z)
+  
+  ns <- ns + (ns < 0)*(-ns + 1)
+  
+  p1 <- thetas[,1]; p2 <- thetas[,3]; ds <- p1 - p2
+  
+  f <-  1 - pnorm(qnorm(0.975) - sqrt(ns)*ds/sqrt(p1*(1-p1) + p2*(1-p2)))
+  
+  fd <- -dnorm(qnorm(0.975) - sqrt(ns)*ds/sqrt(p1*(1-p1) + p2*(1-p2)))*(-0.5*ds/sqrt(ns*( p1*(1-p1) + p2*(1-p2) )))
+  
+  g1 <- 1 - exp(-rho*(k[1]*ds + k[2]*(np + ns)))
+  g1d <- rho*k[2]*exp(-rho*(k[1]*ds + k[2]*(np + ns)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
+  
+  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  gr <- -(t(dfdn) %*% bsMat)/length(ns)
+  #print(gr)
+  gr
+}
+
+# Check against numerical gradient
+z <- rep(10,ncol(bsMat))
+plot(get_grads_mc(z, thetas, bsMat, np, k, rho),
+grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho) )
+```
+
+```{r}
+z <- rep(10,ncol(bsMat))
+
+ptm <- proc.time()
+opt4 <- optim(z, get_u_mc, get_grads_mc, method="L-BFGS-B", control = list(trace = 3),# pgtol=1e-8),
+              thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho)
+z <- opt4$par
+proc.time() - ptm
+
+ns <- (bsMat %*% z)
+
+df <- data.frame(x1=x1s, x2=x2s, n=ns)
+
+ggplot(df[1:10^4,], aes(x1, x2, colour=n)) + geom_jitter() + scale_colour_gradientn(colours = viridis(4)) +
+  geom_point(data=expand.grid(x1=knots1, x2=knots2), colour="black")
+```
+
+We can also look at trying to reduce the dimensions of the prediction space, using a techinuqe like Likelihood Acquired Directions.
+
+```{r}
+require(ldr)
+
+# create a data frame with thetas, xs's, and corresponding utilities
+df <- as.data.frame(cbind(thetas, x1s, x2s))[1:10^3,]
+df$u <- get_u_cond(df[,1:3], 50, np, k, rho)
+
+# fit a LAD model to get a linear reduction from 2 to 1 dimensions (note we can test if this is sufficient)
+fit1 <- lad(X=as.matrix(df[,4:5]), y=df[,6], numdir=1, nslices = 100, numdir.test = F)
+
+# transform the sufficient statistics 
+xrs <- matrix(c(x1s, x2s), ncol=2) %*% fit1[[2]]
+
+# set up the b-splines on the transformed data
+knots <- quantile(xrs, seq(0.01,0.99,l=10))
+bsMat <- bSpline(xrs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
+```
+
+```{r}
+z <- rep(10,14)
+
+ptm <- proc.time()
+for(i in 8:0){
+print(i)
+#ptm <- proc.time()
+opt <- suppressWarnings( nloptr(z, get_u_mc,
+                 opt = list("algorithm"="NLOPT_LN_SBPLX",
+                            "ftol_rel"=1.0e-7,
+                            "maxeval"=100000),
+                 thetas=thetas[1:(M/2^i),], bsMat=bsMat[1:(M/2^i),], np=np, k=k, rho=rho) )
+z <- opt$solution
+#proc.time() - ptm
+plot(xrs[1:10^4], (bsMat %*% z)[1:10^4])
+}
+
+ns1 <- (bsMat %*% z)
+
+proc.time() - ptm
+```
+
+
+### Nested MC
+
+
+```{stan, output.var="ex4", eval=F}
+data {
+  int<lower=0> n;  // Sample size
+  int<lower=0, upper=n> x1; // events in control
+  int<lower=0, upper=n> x2; // events in intervention
+}
+parameters {
+  real<lower=0, upper=1> p1; // rate in control
+  real odd; // odds ratio
+}
+transformed parameters {
+  real<lower=0, upper=1> p2; // rate in intervention
+  
+  p2 = exp(log(p1/(1-p1)) + log(odd) )/( exp(log(p1/(1-p1)) + log(odd) ) + 1);
+}
+model {
+  // Priors
+  p1 ~ beta(15, 85);
+  odd ~ normal(-0.5, 1/sqrt(2));
+  
+  // Likelihood
+  target += binomial_lpmf(x1 | n, p1);
+  target += binomial_lpmf(x2 | n, p2);
+}
+```
+
+In this case there is a finite number of unique pilot outcomes. We can look through our simulated pilot data sets and make a list of all unique outcomes; do MCMC and optimisation for these only; and then go back to the sample to get our estimate.
+
+```{r}
+df <- cbind(thetas, x1s, x2s)
+df <- df[!duplicated(df[,4:5]),]
+
+opt_ns <- NULL
+w <- nrow(df)
+ptm <- proc.time()
+for(i in 1:w){
+  ex_data <- list(n = np, x1 = as.integer(df[,4][i]*np), x2 = as.integer(df[,5][i]*np))
+  
+  o <- capture.output(  suppressWarnings( fit <- sampling(ex4, data=ex_data, iter=5000,
+                                        control=list(adapt_delta=0.99)) ) )
+  
+  #launch_shinystan(as.shinystan(fit))
+  
+  samps <- extract(fit, c("p1", "odd", "p2"))
+  samps <- cbind(samps$p1, samps$odd, samps$p2)
+  
+  opt <- optim(10, get_exp_u_mcmc, lower = 0.1, upper=300, method = "L-BFGS-B",
+        samps=samps, np=np, k=k, rho=rho)
+  opt_ns <- c(opt_ns, opt$par)
+
+}
+
+df <- cbind(df, opt_ns)
+
+opt_ns <- apply(data.frame(x1=x1s, x2=x2s), 1, function(x, df) df[df[,4] == x[1] & df[,5] == x[2], 6], df=df)
+
+proc.time() - ptm
+
+df2 <- data.frame(x1=x1s, x2=x2s, n=opt_ns)[1:10^4,]
+ggplot(df2, aes(x1, x2, colour=n)) + geom_jitter() + scale_colour_gradientn(colours = viridis(4))
+```
+
+Compare:
+```{r}
+us <- get_u_cond(thetas, ns, np, k, rho); us2 <- get_u_cond(thetas2, opt_ns, np, k, rho)
+mean(us, na.rm = T); mean(us2)
+
+
+plot(ns[1:10^5], opt_ns[1:10^5]); abline(0,1)
+```
+
+## Example 3
+
+Now consider a problem with a 2D sufficient statistic. Here we have a cluster randomised trial programme with fixed cluster size but variable number of clusters. 
+
+```{r}
+get_u_cond <- function(thetas, ns, np, k, rho)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  sig <- sqrt(thetas[,1]); ms <- thetas[,2]
+  
+  pows <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
+  
+  utils <- pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+  
+  utils
+}
+```
+
+```{r}
+k <- get_ks(0.01, 0.2, 50)
+rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
+np <- 30
+
+M <- 10^5
+thetas <- cbind(rinvgamma(M, shape=10, rate=1.5*(10-1)), rnorm(M, 0, 0.6))
+
+x1s <- sqrt(thetas[,1]*rchisq(M, df=2*np-1)/(2*np-1))
+x2s <- rnorm(M, thetas[,2], sqrt(2*thetas[,1]/np))
+
+# Set up basis functions
+knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 10)
+bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+knots2 <- seq(quantile(x2s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 10)
+bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+bsMat <- NULL
+for(i in 1:ncol(bsMat2)){
+  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
+}
+
+get_u_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% as.numeric(z)
+  pen <- -sum(ns[ns <= 0])*10^6
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ns, np, k, rho), na.rm = T)
+  u + pen
+}
+```
+
+```{r}
+get_grads_mc <- function(z, thetas, bsMat, np, k, rho)
+{
+  ns <- bsMat %*% as.numeric(z)
+  sig <- sqrt(thetas[,1]); ms <- thetas[,2] 
+  
+  f <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
+  fd <- -dnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))*(-ms/(2*sqrt(2*ns*sig^2)))
+  g1 <- 1 - exp(-rho*(k[1]*ms + k[2]*(np + ns)))
+  g1d <- rho*k[2]*exp(-rho*(k[1]*ms + k[2]*(np + ns)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
+  
+  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  -(t(dfdn) %*% bsMat)/length(ns)
+}
+
+# Check against numerical gradient
+z <- rep(10,14^2)
+gs1 <- get_grads_mc(z, thetas[1:2,], bsMat[1:2,], np, k, rho)
+gs2 <- grad(get_u_mc, z, thetas=thetas[1:2,], bsMat=bsMat[1:2,], np=np, k=k, rho=rho)
+plot(gs1, gs2)
+```
+
+```{r}
+z <- rep(10,14^2)
+
+ptm <- proc.time()
+opt2 <- suppressWarnings( BBoptim(par=z, fn=get_u_mc, gr=get_grads_mc,
+                                  control = list(gtol=1.e-8, checkGrad=F),
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho) )
+proc.time() - ptm
+
+z <- opt2$par
+ns <- (bsMat %*% as.numeric(z))
+
+df <- data.frame(n=ns, x1=x1s, x2=x2s)
+```
+
+```{r}
+ggplot(df[1:10^4,], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+```
+
+
+### NP regression
+
+```{r}
+ptm <- proc.time()
+
+zs <- seq(0,250,1)
+preds <- NULL
+for(n in zs){
+  print(n)
+  us <- get_u_cond(thetas, ns=n, np, k, rho)
+  df <- data.frame(x1=x1s, x2=x2s, u=us)
+
+  fit <- gam(u ~ te(x1, x2, k=9), data=df)
+  preds <- cbind(preds, predict(fit, newdata=df[,1:2]))
+}
+
+ns2 <- zs[apply(preds, 1, which.max)]
+
+proc.time() - ptm
+```
+
+```{r}
+us1 <- get_u_cond(thetas, ns, np, k, rho); us2 <- get_u_cond(thetas, ns2, np, k, rho)
+mean(us1); mean(us2); 
+(log(1-mean(us1)) - log(1-mean(us2)))/(rho*k[2])
+
+df1 <- data.frame(x1=x1s[1:10^4], x2=x2s[1:10^4], n=ns[1:10^4], t=rep("Surrogate", 10^4))
+df2 <- data.frame(x1=x1s[1:10^4], x2=x2s[1:10^4], n=ns2[1:10^4], t=rep("Regression", 10^4))
+df3 <- rbind(df1, df2)
+```
+
+Computation time: 67s (surrogate), 1017s [17 mins] (regression).
+
+```{r, include=T}
+ggplot(df3[df3$t == "Surrogate",], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+
+ggplot(df3[df3$t == "Regression",], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+```
+
+### Nested MC
+
+```{stan, output.var="ex3", eval=F}
+data {
+  int<lower=0> n;  // Sample size
+  real<lower=0> x1; // sample cluster mean var
+  real x2; // sample mean
+}
+parameters {
+  real<lower=0> c_m; // Mean cluster size
+  real<lower=0> c_sigsq; //cluster size variance
+  real d; // Mean treatment effect
+  real<lower=0,upper=1> d_rho;  // ICC for treatment effect
+  real<lower=0> d_sigsq_w;  // whithin cluster variance for treatment effect
+}
+transformed parameters {
+  real<lower=0> d_sigsq_t; // total variance
+  real<lower=0> d_sigsq_c; // cluster mean variance
+  real<lower=0> z;
+  
+  d_sigsq_t = d_sigsq_w/(1 - d_rho);
+  d_sigsq_c = d_sigsq_t*(1 + ( (c_m^2 + c_sigsq)/c_m - 1)*d_rho)/c_m;
+  z = x1*(2*n-1)/d_sigsq_c;
+}
+model {
+  // Priors
+  c_sigsq ~ inv_gamma(20, 39);
+  c_m ~ normal(10, sqrt(c_sigsq/6));
+  
+  d_rho ~ beta(1.6, 30.4);
+  d_sigsq_w ~ inv_gamma(50, 45);
+  
+  d ~ normal(0.2, 0.1);
+  
+  // Likelihood
+  target += chi_square_lpdf( z | 2*n - 1);
+  
+  target += normal_lpdf(x2 | d, sqrt(2*d_sigsq_c/n));
+}
+```
+
+```{r}
+opt_ns <- NULL
+w <- 1000
+ptm <- proc.time()
+for(i in 1:w){
+  ex_data <- list(n = np, x1 = x1s[i]^2, x2 = x2s[i])
+  
+  o <- capture.output(  fit <- sampling(ex3, data=ex_data, iter=5000) )
+  
+  #launch_shinystan(as.shinystan(fit))
+  
+  samps <- extract(fit, c("d", "d_sigsq_c"))
+  samps <- cbind(samps$d_sigsq_c, samps$d)
+  
+  opt <- optim(10, get_exp_u_mcmc, lower = 0.1, upper=300, method = "L-BFGS-B",
+        samps=samps, np=np, k=k, rho=rho)
+  opt_ns <- c(opt_ns, opt$par)
+
+}
+proc.time() - ptm
+
+df <- data.frame(s=x1s[1:w], m=x2s[1:w], n=opt_ns)
+ggplot(df, aes(m, s, colour=n)) + geom_point() + scale_colour_gradientn(colours = terrain.colors(10))
+```
+
+
+## More examples
 
 ## Example 2
 
@@ -681,367 +1185,10 @@ plot(xs[1:10^3], ns)
 points(xs[1:10^3], opt_ns, col="red")
 ```
 
-## Example 3
 
-Mean and variance
 
-```{r}
-get_u_cond <- function(thetas, ns, np, k, rho)
-{
-  # Expected utility of main trial - note we have assumed rho > 0
-  sig <- sqrt(thetas[,1]); ms <- thetas[,2]
-  
-  pows <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
-  
-  utils <- pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns+np)))) +
-    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
-  
-  utils
-}
-```
 
-```{r}
-k <- get_ks(0.01, 0.2, 50)
-rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
-np <- 30
 
-thetas <- cbind(rinvgamma(10^6, shape=10, rate=1.5*(10-1)), rnorm(10^6, 0, 0.6))
-
-x1s <- sqrt(thetas[,1]*rchisq(10^6, df=2*np-1)/(2*np-1))
-x2s <- rnorm(10^6, thetas[,2], sqrt(2*thetas[,1]/np))
-
-# Set up basis functions
-knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 10)
-bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
-
-knots2 <- seq(quantile(x2s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 10)
-bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
-
-bsMat <- NULL
-for(i in 1:ncol(bsMat2)){
-  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
-}
-
-get_u_mc <- function(z, thetas, bsMat, np, k, rho)
-{
-  ns <- bsMat %*% as.numeric(z)
-  pen <- -sum(ns[ns <= 0])*10^6
-  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
-  # expected utilities
-  u <- -mean(get_u_cond(thetas, ns, np, k, rho), na.rm = T)
-  u + pen
-}
-```
-
-```{r}
-get_grads_mc <- function(z, thetas, bsMat, np, k, rho)
-{
-  ns <- bsMat %*% as.numeric(z)
-  sig <- sqrt(thetas[,1]); ms <- thetas[,2] 
-  
-  f <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))
-  fd <- -dnorm(qnorm(1-0.025) - ms/sqrt(2*sig^2/ns))*(-ms/(2*sqrt(2*ns*sig^2)))
-  g1 <- 1 - exp(-rho*(k[1]*ms + k[2]*(np + ns)))
-  g1d <- rho*k[2]*exp(-rho*(k[1]*ms + k[2]*(np + ns)))
-  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
-  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
-  
-  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
-  
-  -(t(dfdn) %*% bsMat)/length(ns)
-}
-
-# Check against numerical gradient
-gs1 <- get_grads_mc(z, thetas, bsMat, np, k, rho)
-gs2 <- grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho)
-plot(gs1, gs2)
-```
-
-```{r}
-z <- rep(10,14^2)
-
-ptm <- proc.time()
-opt2 <- suppressWarnings( BBoptim(par=z, fn=get_u_mc, gr=get_grads_mc,
-                                  control = list(gtol=1.e-8, checkGrad=F),
-                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho) )
-z <- opt2$par
-ns <- (bsMat %*% as.numeric(z))
-
-df <- data.frame(n=ns, x1=x1s, x2=x2s)
-```
-
-```{r}
-ggplot(df[1:10^4,], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
-  theme_minimal() +
-  scale_color_viridis_c()
-```
-
-### Nested MC
-
-```{stan, output.var="ex3", eval=F}
-data {
-  int<lower=0> n;  // Sample size
-  real<lower=0> x1; // sample cluster mean var
-  real x2; // sample mean
-}
-parameters {
-  real<lower=0> c_m; // Mean cluster size
-  real<lower=0> c_sigsq; //cluster size variance
-  real d; // Mean treatment effect
-  real<lower=0,upper=1> d_rho;  // ICC for treatment effect
-  real<lower=0> d_sigsq_w;  // whithin cluster variance for treatment effect
-}
-transformed parameters {
-  real<lower=0> d_sigsq_t; // total variance
-  real<lower=0> d_sigsq_c; // cluster mean variance
-  real<lower=0> z;
-  
-  d_sigsq_t = d_sigsq_w/(1 - d_rho);
-  d_sigsq_c = d_sigsq_t*(1 + ( (c_m^2 + c_sigsq)/c_m - 1)*d_rho)/c_m;
-  z = x1*(2*n-1)/d_sigsq_c;
-}
-model {
-  // Priors
-  c_sigsq ~ inv_gamma(20, 39);
-  c_m ~ normal(10, sqrt(c_sigsq/6));
-  
-  d_rho ~ beta(1.6, 30.4);
-  d_sigsq_w ~ inv_gamma(50, 45);
-  
-  d ~ normal(0.2, 0.1);
-  
-  // Likelihood
-  target += chi_square_lpdf( z | 2*n - 1);
-  
-  target += normal_lpdf(x2 | d, sqrt(2*d_sigsq_c/n));
-}
-```
-
-```{r}
-opt_ns <- NULL
-w <- 1000
-ptm <- proc.time()
-for(i in 1:w){
-  ex_data <- list(n = np, x1 = x1s[i]^2, x2 = x2s[i])
-  
-  o <- capture.output(  fit <- sampling(ex3, data=ex_data, iter=5000) )
-  
-  #launch_shinystan(as.shinystan(fit))
-  
-  samps <- extract(fit, c("d", "d_sigsq_c"))
-  samps <- cbind(samps$d_sigsq_c, samps$d)
-  
-  opt <- optim(10, get_exp_u_mcmc, lower = 0.1, upper=300, method = "L-BFGS-B",
-        samps=samps, np=np, k=k, rho=rho)
-  opt_ns <- c(opt_ns, opt$par)
-
-}
-proc.time() - ptm
-
-df <- data.frame(s=x1s[1:w], m=x2s[1:w], n=opt_ns)
-ggplot(df, aes(m, s, colour=n)) + geom_point() + scale_colour_gradientn(colours = terrain.colors(10))
-```
-
-
-
-
-## Example 4
-
-Suppose we have a binary outcome. Probability of an event in control and intervention arms is $p_c, p_I$. We are interested in the absolute difference $d = p_c - p_I$. This is what goes into our utility function. We have a Beta prior on the control rate, and a normal prior on the log of the odds ratio. We don't have a closed form expression for the posterior of the absolute difference, so need to sample from it via MCMC or use our method.
-
-
-```{r}
-k <- get_ks(0.01, 0.05, 50)
-rho <- 2
-np <- 30
-
-M <- 10^5
-thetas <- cbind(rbeta(M, 15, 85),
-                exp(rnorm(M, -0.5, 1/sqrt(2))))
-y <- log(thetas[,1]/(1-thetas[,1])) + log(thetas[,2])
-thetas <- cbind(thetas, exp(y)/(exp(y) + 1))
-
-x1s <- rbinom(M, np, thetas[,1])/np
-x2s <- rbinom(M, np, thetas[,3])/np
-
-# Set up basis functions
-#knots1 <- seq(min(x1s)+1/np, max(x1s)-1/np, l = 6)
-knots1 <- quantile(x1s, seq(0.01,0.99,l=6))
-bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
-
-#knots2 <- seq(min(x2s)+1/np, max(x2s)-1/np, l = 6)
-knots2 <- quantile(x2s, seq(0.01,0.99,l=6))
-bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
-
-bsMat <- NULL
-for(i in 1:ncol(bsMat2)){
-  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
-}
-
-get_u_cond <- function(thetas, ns, np, k, rho)
-{
-  # Expected utility of main trial - note we have assumed rho > 0
-  p1 <- sqrt(thetas[,1]); p2 <- thetas[,3]; ds <- p1 - p2
-
-  pows <- pnorm((sqrt(ns) * abs(p1 - p2) - (qnorm(0.025, 
-        lower.tail = FALSE) * sqrt((p1 + p2) * (1 - (p1 + p2)/2))))/sqrt(p1 * 
-        (1 - p1) + p2 * (1 - p2)))
-  
-  pows*(1-exp(-rho*(k[1]*ds + k[2]*(ns+np)))) +
-    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
-}
-
-get_u_mc <- function(z, thetas, bsMat, np, k, rho)
-{
-  ns <- bsMat %*% z
-  pen <- -sum(ns[ns <= 0])*10^6
-  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
-  # expected utilities
-  u <- -mean(get_u_cond(thetas, ns, np, k, rho), na.rm=T)
-  u + pen
-}
-```
-
-
-```{r}
-z <- rep(10,ncol(bsMat))
-
-ptm <- proc.time()
-for(i in 0:0){
-print(i)
-#ptm <- proc.time()
-opt2 <- suppressWarnings( BBoptim(z, get_u_mc,
-                                  control = list(gtol=1e-7),
-                 thetas=thetas[1:(M/2^i),], bsMat=bsMat[1:(M/2^i),], np=np, k=k, rho=rho) )
-z <- opt2$par
-#proc.time() - ptm
-#plot(x2s[1:10^4], (bsMat %*% z)[1:10^4])
-}
-proc.time() - ptm
-
-ns <- (bsMat %*% z)
-
-df2 <- data.frame(x1=x1s, x2=x2s, n=ns)[1:10^4,]
-ggplot(df2, aes(x1, x2, colour=n)) + geom_jitter() + scale_colour_gradientn(colours = viridis(4)) +
-  geom_point(data=expand.grid(x1=knots1, x2=knots2), colour="black")
-```
-
-We can also look at trying to reduce the dimensions of the prediction space, using a techinuqe like Likelihood Acquired Directions.
-
-```{r}
-require(ldr)
-
-# create a data frame with thetas, xs's, and corresponding utilities
-df <- as.data.frame(cbind(thetas, x1s, x2s))[1:10^3,]
-df$u <- get_u_cond(df[,1:3], 50, np, k, rho)
-
-# fit a LAD model to get a linear reduction from 2 to 1 dimensions (note we can test if this is sufficient)
-fit1 <- lad(X=as.matrix(df[,4:5]), y=df[,6], numdir=1, nslices = 100, numdir.test = F)
-
-# transform the sufficient statistics 
-xrs <- matrix(c(x1s, x2s), ncol=2) %*% fit1[[2]]
-
-# set up the b-splines on the transformed data
-knots <- quantile(xrs, seq(0.01,0.99,l=10))
-bsMat <- bSpline(xrs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
-```
-
-```{r}
-z <- rep(10,14)
-
-ptm <- proc.time()
-for(i in 8:0){
-print(i)
-#ptm <- proc.time()
-opt <- suppressWarnings( nloptr(z, get_u_mc,
-                 opt = list("algorithm"="NLOPT_LN_SBPLX",
-                            "ftol_rel"=1.0e-7,
-                            "maxeval"=100000),
-                 thetas=thetas[1:(M/2^i),], bsMat=bsMat[1:(M/2^i),], np=np, k=k, rho=rho) )
-z <- opt$solution
-#proc.time() - ptm
-plot(xrs[1:10^4], (bsMat %*% z)[1:10^4])
-}
-
-ns1 <- (bsMat %*% z)
-
-proc.time() - ptm
-```
-
-
-### Nested MC
-
-
-```{stan, output.var="ex4", eval=F}
-data {
-  int<lower=0> n;  // Sample size
-  int<lower=0, upper=n> x1; // events in control
-  int<lower=0, upper=n> x2; // events in intervention
-}
-parameters {
-  real<lower=0, upper=1> p1; // rate in control
-  real odd; // odds ratio
-}
-transformed parameters {
-  real<lower=0, upper=1> p2; // rate in intervention
-  
-  p2 = exp(log(p1/(1-p1)) + log(odd) )/( exp(log(p1/(1-p1)) + log(odd) ) + 1);
-}
-model {
-  // Priors
-  p1 ~ beta(15, 85);
-  odd ~ normal(-0.5, 1/sqrt(2));
-  
-  // Likelihood
-  target += binomial_lpmf(x1 | n, p1);
-  target += binomial_lpmf(x2 | n, p2);
-}
-```
-
-In this case there is a finite number of unique pilot outcomes. We can look through our simulated pilot data sets and make a list of all unique outcomes; do MCMC and optimisation for these only; and then go back to the sample to get our estimate.
-
-```{r}
-df <- cbind(thetas, x1s, x2s)
-df <- df[!duplicated(df[,4:5]),]
-
-opt_ns <- NULL
-w <- nrow(df)
-ptm <- proc.time()
-for(i in 1:w){
-  ex_data <- list(n = np, x1 = as.integer(df[,4][i]*np), x2 = as.integer(df[,5][i]*np))
-  
-  o <- capture.output(  suppressWarnings( fit <- sampling(ex4, data=ex_data, iter=5000,
-                                        control=list(adapt_delta=0.99)) ) )
-  
-  #launch_shinystan(as.shinystan(fit))
-  
-  samps <- extract(fit, c("p1", "odd", "p2"))
-  samps <- cbind(samps$p1, samps$odd, samps$p2)
-  
-  opt <- optim(10, get_exp_u_mcmc, lower = 0.1, upper=300, method = "L-BFGS-B",
-        samps=samps, np=np, k=k, rho=rho)
-  opt_ns <- c(opt_ns, opt$par)
-
-}
-
-df <- cbind(df, opt_ns)
-
-opt_ns <- apply(data.frame(x1=x1s, x2=x2s), 1, function(x, df) df[df[,4] == x[1] & df[,5] == x[2], 6], df=df)
-
-proc.time() - ptm
-
-df2 <- data.frame(x1=x1s, x2=x2s, n=opt_ns)[1:10^4,]
-ggplot(df2, aes(x1, x2, colour=n)) + geom_jitter() + scale_colour_gradientn(colours = viridis(4))
-```
-
-Compare:
-```{r}
-us <- get_u_cond(thetas, ns, np, k, rho); us2 <- get_u_cond(thetas2, opt_ns, np, k, rho)
-mean(us, na.rm = T); mean(us2)
-
-
-plot(ns[1:10^5], opt_ns[1:10^5]); abline(0,1)
-```
 
 ## Example 5
 
@@ -1067,22 +1214,372 @@ p_sample <- function()
   # effect
   eff <- rnorm(1, 0.2, 0.1)
   
-  return(c(var_t, var_b, eff))
+  # simulate data and summarise
+  k_ms <- rep(rnorm(2*kp, 0, sqrt(var_b)), each = mp)
+  ys <- rnorm(2*kp*mp, k_ms, sqrt(var_w))
+  
+  return(c(var_b, var_t, eff, sd(colMeans(matrix(ys, ncol=2*kp))), sd(ys), (mean(ys[1:(kp*mp)]) + eff) - mean(ys[(kp*mp+1):(2*kp*mp)])))
 }
 
-# For example,
-p_sample()
+
+kp <- 6; mp <- 10
 
 thetas <- t(replicate(10^5, p_sample()))
 var_cs <- thetas[,1]*(1 + (mp - 1)*(thetas[,2]/thetas[,1]))/mp
 
-k <- get_ks(0.001, 0.2, 50)
+k <- get_ks(0.00001, 0.2, 50)
 rho <- 2; sd_0 <- 0.6; mu_0 <- 0
 kp <- 6; mp <- 10; np <- kp*mp
 
-x1s <- sqrt(thetas[,1]*rchisq(10^5, df=2*np-1)/(2*np-1))
-x2s <- sqrt(thetas[,2]*rchisq(10^5, df=2*kp-1)/(2*kp-1))
-#x3s <- rnorm(10^4, thetas[,3], sqrt(2*var_cs/kp))
+#x1s <- sqrt(thetas[,1]*rchisq(10^5, df=2*np-1)/(2*np-1))
+#x2s <- sqrt(thetas[,2]*rchisq(10^5, df=2*kp-1)/(2*kp-1))
+#x3s <- rnorm(10^5, thetas[,3], sqrt(2*var_cs/kp))
+
+x1s <- thetas[,4]; x2s <- thetas[,5]; x3s <- thetas[,6]
+thetas <- thetas[,1:3]
+
+# Set up basis functions
+knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 5)
+bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+knots2 <- seq(quantile(x2s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 5)
+bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+knots3 <- seq(quantile(x3s, c(0.01, 0.99))[1], quantile(x3s, c(0.01, 0.99))[2], l = 5)
+bsMat3 <- bSpline(x3s, knots = knots3, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+bsMat <- NULL
+for(i in 1:ncol(bsMat2)){
+  #bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
+  for(j in 1:ncol(bsMat3)){
+    bsMat <- cbind(bsMat, bsMat1*bsMat2[,i]*bsMat3[,j])
+  }
+}
+
+get_u_cond <- function(thetas, ks, ms, np, rho, k)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  sig_cs <- sqrt(thetas[,1] + (thetas[,2] - thetas[,1])/ms)
+  mus <- thetas[,3]
+  # Using a weighted sum of participants and clusters as our sampling cost
+  ns <- ms*ks + 10*ks
+
+  # Get power
+  pows <- 1 - pnorm(qnorm(1-0.025) - mus/sqrt(2*sig_cs^2/ks))
+  
+  pows*(1-exp(-rho*(k[1]*mus + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+}
+
+get_u_mc <- function(z, thetas, bsMat, np, rho, le, k)
+{
+  ks <- bsMat %*% z[1:le]
+  ms <- bsMat %*% z[(le + 1):(2*le)]
+  pen <- -sum(ks[ks <= 0])*10^6 - sum(ms[ms <= 0])*10^6
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- -mean(get_u_cond(thetas, ks, ms, np, rho, k), na.rm=T)
+  u + pen
+}
+```
+
+```{r}
+get_grads_mc <- function(z, thetas, bsMat, np, rho, le, k)
+{
+  ks <- bsMat %*% as.numeric(z[1:le]); ms <- bsMat %*% as.numeric(z[(le+1):(2*le)])
+  
+  sig_t <- sqrt(thetas[,2]); sig_b <- sqrt(thetas[,1]); mus <- thetas[,3] 
+  sig_w <- sqrt(sig_t^2 - sig_b^2)
+  
+  f <- 1-pnorm(qnorm(1-0.025) - mus/sqrt(2*sig_b^2/ks + 2*sig_w^2/(ks*ms)))
+  g1 <- 1 - exp(-rho*(k[1]*mus + k[2]*(np + ms*ks + 10*ks)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ms*ks + 10*ks) + k[3]))
+  
+  g1d_m <- rho*k[2]*ks*exp(-rho*(k[1]*mus + k[2]*(np + ms*ks + 10*ks)))
+  g2d_m <- rho*k[2]*ks*exp(-rho*(k[2]*(np + ms*ks + 10*ks) + k[3]))
+  
+  fd_m <- -dnorm(qnorm(1-0.025) - mus/sqrt(2*sig_b^2/ks + 2*sig_w^2/(ks*ms)))*(mus/2)*((2*sig_b^2/ks + 2*sig_w^2/(ks*ms))^(-3/2))*(-2*sig_w^2/(ks*ms^2))
+  
+  g1d_k <- rho*k[2]*(ms + 10)*exp(-rho*(k[1]*mus + k[2]*(np + ms*ks + 10*ks)))
+  g2d_k <- rho*k[2]*(ms + 10)*exp(-rho*(k[2]*(np + ms*ks + 10*ks) + k[3]))
+  
+  fd_k <- -dnorm(qnorm(1-0.025) - mus/sqrt(2*sig_b^2/ks + 2*sig_w^2/(ks*ms)))*(mus/2)*((2*sig_b^2/ks + 2*sig_w^2/(ks*ms))^(-3/2))*(-2*sig_b^2/(ks^2) - 2*sig_w^2/(ms*ks^2))
+  
+  dfdm <- fd_m*(g1 - g2) + f*(g1d_m - g2d_m) + g2d_m
+  dfdk <- fd_k*(g1 - g2) + f*(g1d_k - g2d_k) + g2d_k
+  
+  c( -(t(dfdk) %*% bsMat)/length(ks), -(t(dfdm) %*% bsMat)/length(ms))
+}
+
+# Check against numerical gradient
+le <- 9^3
+z <- rep(10,2*le)
+gs1 <- get_grads_mc(z, thetas[1:20,], bsMat[1:20,], np, rho, le=le, k=k)
+gs2 <- grad(get_u_mc, z, thetas=thetas[1:20,], bsMat=bsMat[1:20,], np=np, rho=rho, le=le, k=k)
+plot(gs1, gs2)
+```
+
+```{r}
+le <- 9^3
+z <- rep(10,2*le)
+
+ptm <- proc.time()
+opt2 <- suppressWarnings( BBoptim(par=z, fn=get_u_mc, gr=get_grads_mc,
+                                  control = list(gtol=1.e-7, ftol=1.e-10, checkGrad=F),
+                 thetas=thetas, bsMat=bsMat, np=np, rho=rho, le=le, k=k) )
+proc.time() - ptm
+
+z <- opt2$par
+ks <- bsMat %*% as.numeric(z[1:le]); ms <- bsMat %*% as.numeric(z[(le+1):(2*le)])
+
+df <- data.frame(k=ks, m=ms, x1=x1s, x2=x2s, x3=x3s)
+```
+
+```{r}
+ggplot(df[1:10^4,], aes(x1, x2, colour=m)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+```
+
+### NP Regression
+
+```{r}
+ptm <- proc.time()
+
+# list the decisions to be cycled through
+zs <- expand.grid(k = seq(5,50,1), m = seq(5,25,1))
+preds <- NULL
+for(i in 1:nrow(zs)){
+  # For each decision, get the utilities
+  us <- get_u_cond(thetas, ks=zs[i,1], ms=zs[i,2], np, rho, k)
+  df <- data.frame(x1=x1s, x2=x2s, x3=x3s, u=us)
+
+  # Fit the NP regression model
+  fit <- gam(u ~ te(x1, x2, x3), data=df)
+  # Get a vector of predictions from the model and add to a matrix
+  preds <- cbind(preds, predict(fit, newdata=df[,1:3,drop=F]))
+}
+
+# For each simulated instance, choose the n which gives largest expected utility
+ns3 <- zs[apply(preds, 1, which.max),]
+
+proc.time() - ptm
+```
+
+```{r}
+us1 <- get_u_cond(thetas, ks, ms, np, rho, k); us2 <- get_u_cond(thetas, ns3[,1], ns3[,2], np, rho, k)
+mean(us1); mean(us2); 
+(log(1-mean(us1)) - log(1-mean(us2)))/(rho*k[2])
+
+df3 <- rbind(df2, data.frame(x=xs[1:10^3], n=ns3[1:10^3], t=rep("Regression", 10^3)))
+```
+
+
+## Example 6 
+
+Finding decision rules for both n and alpha
+
+```{r}
+get_ks <- function(d_bar, d_hat, n)
+{
+  k_d <- 1/(1 + d_hat - d_bar/n)
+  k_n <- -k_d*d_bar/n
+  k_c <- 1 - k_d - k_n
+  
+  return(c(k_d, k_n, k_c))
+}
+
+k <- get_ks(0.005, 0.3, 50)
+rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
+np <- 30
+```
+
+
+```{r}
+M <- 10^5
+thetas <- rnorm(M, mu_0, sd_0)
+xs <- rnorm(M, thetas, sqrt(2*sig^2/np))
+```
+
+```{r}
+get_u_cond <- function(thetas, ns, qs, np, k, rho, sig)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  
+  # Get power
+  pows <- 1-pnorm(qs - thetas/sqrt(2*sig^2/ns))
+  
+  utils <- pows*(1-exp(-rho*(k[1]*thetas + k[2]*(ns+np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
+  
+  utils
+}
+```
+
+```{r}
+# Set up basis functions
+knots <- seq(quantile(xs, c(0.01, 0.99))[1], quantile(xs, c(0.01, 0.99))[2], l = 10)
+bsMat <- bSpline(xs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
+
+get_u_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
+{
+  # Get sample sizes from decision rule
+  ns <- bsMat %*% z[1:14]
+  #ns <- ifelse(ns > 0, ns, 0.0001)
+  # Get critical values from decision rule
+  qs <- bsMat %*% z[15:28]
+  
+  # Penalty for negative sample size
+  pen <- -sum(ns[ns < 0])*100000
+  
+  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # expected utilities
+  u <- pen
+  if(!(pen > 0))u <- -mean(get_u_cond(thetas, ns, qs, np, k, rho, sig))
+  u
+  
+  #u <- -mean(get_u_cond(thetas, ns, qs, np, k, rho, sig))
+  #u + pen
+}
+```
+
+Derivatives:
+```{r}
+get_grads_mc <- function(z, thetas, bsMat, xs, np, k, rho, sig)
+{
+  ns <- bsMat %*% z[1:14]
+  qs <- bsMat %*% z[15:28]
+  
+  # Get derivative with respect to n
+  f <- 1-pnorm(qs - thetas/sqrt(2*sig^2/ns))
+  fd <- -dnorm(qs - thetas/sqrt(2*sig^2/ns))*(-thetas/(2*sqrt(2*ns*sig^2)))
+  g1 <- 1 - exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
+  g1d <- rho*k[2]*exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns) + k[3]))
+  
+  dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  # Get derivative with respect to q (= qnorm(1 - alpha))
+  fdq <- -dnorm(qs - thetas/sqrt(2*sig^2/ns))
+  
+  dfdq <- fdq*(g1 - g2)
+  
+  # Multiply by derivative with respect to z and sum
+  c(-(t(dfdn) %*% bsMat)/length(ns), -(t(dfdq) %*% bsMat)/length(ns))
+}
+
+# Check against numerical gradient
+get_grads_mc(z, thetas, bsMat, xs, np, k, rho, sig)
+grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig)
+```
+
+```{r}
+z <- rep(1,28)
+ptm <- proc.time()
+opt2 <- suppressWarnings( BBoptim(z, get_u_mc, get_grads_mc,
+                                  control = list(gtol=1.e-8, ftol=1.e-10, checkGrad=F),
+                                  #lower=c(rep(-10^3, 14), rep(-10^3, 14)), 
+                                  #upper=c(rep(10^3, 14), rep(10^3, 14)),
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, sig=sig) )
+proc.time() - ptm
+
+z <- opt2$par
+ns <- bsMat %*% z[1:14]
+qs <- bsMat %*% z[15:28]
+
+df <- data.frame(n=ns, q=qs, x=xs)
+df$a <- 1-pnorm(df$q)
+
+ggplot(df[1:10^3,], aes(x, n, colour=a)) + geom_point()
+ggplot(df[1:10^3,], aes(x, q, colour=n)) + geom_point()
+```
+
+
+### Semi-analytic coparison
+
+```{r}
+exp_u <- function(x, np, k, rho, m, s, sig)
+{
+  n <- x[1]; q <- x[2]
+  
+  d <- q*sqrt(2*sig*sig/n)
+  k_d <- k[1]; k_n <- k[2]; k_c <- k[3]
+  
+  sd_1 <- sqrt(1/(1/s^2 + n/(2*sig^2)))
+  t <- -rho*k_d
+  sig_x <- sqrt(s^2 + 2*sig^2/n)
+  r <- (t * sd_1^2 *n)/(2*sig^2)
+
+  -(  (1 - pnorm((d-m)/sig_x)) - exp(-rho*k_n*(n+np)) *
+                                   exp(sd_1^2 *t*t/2) *
+                                   exp(t*sd_1^2 *m/s^2) *
+                                   exp(m*r + (sig_x^2*r*r/2)) *
+                                   (1-pnorm((d-m)/sig_x - sig_x*r)) +
+    pnorm((d-m)/sig_x) * (1 - exp(-rho*(k_n*(n+np) + k_c))) )
+}
+
+# Get the posterior variance
+var_1 <- 1/( 1/(sd_0^2) + np/(2*sig^2) )
+# Get posterior means corresponding to each pilot data sample
+pms <- var_1*(mu_0/(sd_0^2) + np*xs/(2*sig^2))
+
+ptm <- proc.time()
+ns2 <- NULL; ds2 <- NULL; us2 <- NULL
+for(m in pms[1:10000]){
+  suppressWarnings( opt <- optim(c(50,1.95), exp_u, np=np, k=k, rho=rho, m=m, s=sqrt(var_1), sig=sig, #method="L-BFGS-B",
+             lower=c(0.001, -5), upper=c(600, 5)) )
+  ns2 <- c(ns2, opt$par[1]); ds2 <- c(ds2, opt$par[2]); us2 <- c(us2, -opt$value)
+}
+proc.time() - ptm
+```
+
+Even though we have a conjugate prior and an exact expression for expected utility of the definitive trial, this procedure (where we need to solve an optimisation problem for each sample in the outer loop) takes much longer than the proposed method - it takes 22.3 mins, compared with 6.5.
+
+Plot the optimal decision rule on top of our approximation, and contrast their EVSI estimates:
+
+```{r}
+us <- get_u_cond(thetas, ns, qs, np, k, rho, sig); us2 <- get_u_cond(thetas, ns2, ds2, np, k, rho, sig)
+mean(us); mean(us2); 
+(log(1-mean(us)) - log(1-mean(us2)))/(rho*k[2])
+
+plot(xs[1:10^3], ns[1:10^3],)
+points(xs[1:10^3], ns2[1:10^3], col="red")
+```
+
+
+## Example 7
+
+3D sample space - Mean and heteroskedastic variance
+
+```{r}
+get_u_cond <- function(thetas, ns_a, ns_b, np, k, rho)
+{
+  # Expected utility of main trial - note we have assumed rho > 0
+  sig_a <- sqrt(thetas[,1]); sig_b <- sqrt(thetas[,2]); ms <- thetas[,3]
+  
+  pows <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(sig_a^2/ns_a + sig_b^2/ns_b))
+  
+  utils <- pows*(1-exp(-rho*(k[1]*ms + k[2]*(ns_a + ns_b + np)))) +
+    (1-pows)*(1-exp(-rho*(k[2]*(ns_a + ns_b + np) + k[3])))
+  
+  utils
+}
+```
+
+```{r}
+k <- get_ks(0.005, 0.2, 50)
+rho <- 2; sd_0 <- 0.6; mu_0 <- 0; sig <- 1.5
+np <- 30
+
+M <- 10^5
+thetas <- cbind(rinvgamma(M, shape=10, rate=1.5*(10-1)), 
+                rinvgamma(M, shape=10, rate=1.5*(10-1)), 
+                rnorm(M, 0, 0.6))
+
+x1s <- sqrt(thetas[,1]*rchisq(M, df=np-1)/(np-1))
+x2s <- sqrt(thetas[,2]*rchisq(M, df=np-1)/(np-1))
+x3s <- rnorm(M, thetas[,3], sqrt(thetas[,1]/np + thetas[,2]/np ))
 
 # Set up basis functions
 knots1 <- seq(quantile(x1s, c(0.01, 0.99))[1], quantile(x1s, c(0.01, 0.99))[2], l = 6)
@@ -1091,70 +1588,130 @@ bsMat1 <- bSpline(x1s, knots = knots1, degree = 3, intercept = T) # using degree
 knots2 <- seq(quantile(x2s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 6)
 bsMat2 <- bSpline(x2s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
 
-#knots3 <- seq(quantile(x3s, c(0.01, 0.99))[1], quantile(x2s, c(0.01, 0.99))[2], l = 5)
-#bsMat3 <- bSpline(x3s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
+knots3 <- seq(quantile(x3s, c(0.01, 0.99))[1], quantile(x3s, c(0.01, 0.99))[2], l = 6)
+bsMat3 <- bSpline(x3s, knots = knots2, degree = 3, intercept = T) # using degree = 3 for cubic splines
 
 bsMat <- NULL
-for(i in 1:ncol(bsMat2)){
-  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i])
-  #for(j in 1:ncol(bsMat3)){
-  #  bsMat <- cbind(bsMat, bsMat1*bsMat2[,i]*bsMat3[,j])
-  #}
-}
+  for(i in 1:ncol(bsMat2)){
+    for(j in 1:ncol(bsMat3)){
+      bsMat <- cbind(bsMat, bsMat1*bsMat2[,i]*bsMat3[,j])
+    }
+  }
 
-get_u_cond <- function(thetas, ks, ms, np, k, rho)
+get_u_mc <- function(z, thetas, bsMat, np, k, rho, le)
 {
-  # Expected utility of main trial - note we have assumed rho > 0
-  sig_cs <- sqrt(thetas[,2] + (thetas[,1] - thetas[,2])/ms)
-  mus <- thetas[,3]
-  # Using a weighted sum of participants and clusters as our sampling cost
-  ns <- ms*ks + 10*ks
-
-  # Calculate the critical value to give alpha = 0.025
-  c <- qnorm(1-0.025)
-  # Get resulting power
-  pows <- 1 - pnorm(c, mus/sqrt(2*sig_cs^2/ks))
-  
-  pows*(1-exp(-rho*(k[1]*mus + k[2]*(ns+np)))) +
-    (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
-}
-
-get_u_mc <- function(z, thetas, bsMat, np, k, rho)
-{
-  ks <- bsMat %*% z[1:(length(z)/2)]
-  ms <- bsMat %*% z[(length(z)/2 + 1):length(z)]
-  pen <- -sum(ks[ks <= 0])*10^6 - sum(ms[ms <= 0])*10^6
+  ns_a <- bsMat %*% as.numeric(z[1:le]); ns_b <- bsMat %*% as.numeric(z[(le+1):(2*le)])
+  pen <- -sum(ns_a[ns_a <= 0])*10^6 - sum(ns_b[ns_b <= 0])*10^6
   # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
   # expected utilities
-  u <- -mean(get_u_cond(thetas, ks, ms, np, k, rho), na.rm=T)
+  u <- -mean(get_u_cond(thetas, ns_a, ns_b, np, k, rho), na.rm = T)
   u + pen
 }
 ```
 
 ```{r}
-z <- rep(10,2*ncol(bsMat))
-i <- 0
+get_grads_mc <- function(z, thetas, bsMat, np, k, rho, le)
+{
+  ns_a <- bsMat %*% as.numeric(z[1:le]); ns_b <- bsMat %*% as.numeric(z[(le+1):(2*le)])
+  
+  sig_a <- sqrt(thetas[,1]); sig_b <- sqrt(thetas[,2]); ms <- thetas[,3] 
+  
+  f <- 1-pnorm(qnorm(1-0.025) - ms/sqrt(sig_a^2/ns_a + sig_b^2/ns_b))
+  g1 <- 1 - exp(-rho*(k[1]*ms + k[2]*(np + ns_a + ns_b)))
+  g2 <- 1 - exp(-rho*(k[2]*(np + ns_a + ns_b) + k[3]))
+  
+  g1d <- rho*k[2]*exp(-rho*(k[1]*ms + k[2]*(np + ns_a + ns_b)))
+  g2d <- rho*k[2]*exp(-rho*(k[2]*(np + ns_a + ns_b) + k[3]))
+  
+  fd <- -dnorm(qnorm(1-0.025) - ms/sqrt(sig_a^2/ns_a + sig_b^2/ns_b))*(ms/2)*(sig_a^2/ns_a + sig_b^2/ns_b)^(-3/2)
+  
+  fd_a <- fd*(-sig_a^2/(ns_a^2))
+  fd_b <- fd*(-sig_b^2/(ns_b^2))
+  
+  dfdn_a <- fd_a*(g1 - g2) + f*(g1d - g2d) + g2d
+  dfdn_b <- fd_b*(g1 - g2) + f*(g1d - g2d) + g2d
+  
+  c( -(t(dfdn_a) %*% bsMat)/length(ns_a), -(t(dfdn_b) %*% bsMat)/length(ns_a))
+}
 
-ptm <- proc.time()
-
-opt2 <- suppressWarnings( BBoptim(z, get_u_mc,
-                                  control = list(gtol=1e-6),
-                 thetas=thetas[1:(10^5/2^i),], bsMat=bsMat[1:(10^5/2^i),], np=np, k=k, rho=rho) )
-z <- opt2$par
-plot(x2s[1:10^4], (bsMat %*% z[1:(length(z)/2)])[1:10^4])
-plot(x1s[1:10^4], (bsMat %*% z[(length(z)/2+1):length(z)])[1:10^4])
-
-proc.time() - ptm
-
-ks <- (bsMat %*% z[1:(length(z)/2)])
-ms <- (bsMat %*% z[(length(z)/2+1):length(z)])
-
-df2 <- data.frame(x1=x1s, x2=x2s, k=ks, m=ms)[1:10^4,]
-
-ggplot(df2, aes(x1, x2, colour=k)) + geom_point() + scale_colour_gradientn(colours = viridis(4))
-ggplot(df2, aes(x1, x2, colour=m)) + geom_point() + scale_colour_gradientn(colours = viridis(4))
+# Check against numerical gradient
+z <- rep(10,2*(10^3))
+gs1 <- get_grads_mc(z, thetas[1:20,], bsMat[1:20,], np, k, rho, le=10^3)
+gs2 <- grad(get_u_mc, z, thetas=thetas[1:20,], bsMat=bsMat[1:20,], np=np, k=k, rho=rho, le=10^3)
+plot(gs1, gs2)
 ```
 
+```{r}
+le <- 10^3
+z <- rep(1,2*le)
+
+ptm <- proc.time()
+opt2 <- suppressWarnings( BBoptim(par=z, fn=get_u_mc, gr=get_grads_mc,
+                                  control = list(gtol=1.e-8, checkGrad=F),
+                 thetas=thetas, bsMat=bsMat, np=np, k=k, rho=rho, le=le) )
+proc.time() - ptm
+
+z <- opt2$par
+ns_a <- bsMat %*% as.numeric(z[1:le]); ns_b <- bsMat %*% as.numeric(z[(le+1):(2*le)])
+
+df <- data.frame(n_a=ns_a, n_b=ns_b, x1=x1s, x2=x2s, x3=x3s)
+```
+
+```{r}
+ggplot(df[1:10^4,], aes(x1, n_a, colour=x2)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+```
+
+### NP regression
+
+```{r}
+ptm <- proc.time()
+
+zs <- seq(0,250,5)
+preds <- NULL
+for(n_a in zs){
+  print(n_a)
+  for(n_b in zs){
+    us <- get_u_cond(thetas, ns_a=n_a, ns_b=n_b, np, k, rho)
+    df <- data.frame(x1=x1s, x2=x2s, x3=x3s, u=us)
+  
+    fit <- gam(u ~ te(x1, x2, x3), data=df)
+    preds <- cbind(preds, predict(fit, newdata=df[,1:3]))
+  }
+}
+
+pos <- apply(preds, 1, which.max)
+
+
+l <- length(zs)
+ns_a2 <- zs[(pos + l - 1) %/% l]
+ns_b2 <- zs[(pos - 1) %% l + 1]
+
+proc.time() - ptm
+```
+
+```{r}
+us1 <- get_u_cond(thetas, ns_a, ns_b, np, k, rho); us2 <- get_u_cond(thetas, ns_a2, ns_b2, np, k, rho)
+mean(us1); mean(us2); 
+(log(1-mean(us1)) - log(1-mean(us2)))/(rho*k[2])
+
+df1 <- data.frame(x1=x1s[1:10^4], x2=x2s[1:10^4], n=ns[1:10^4], t=rep("Surrogate", 10^4))
+df2 <- data.frame(x1=x1s[1:10^4], x2=x2s[1:10^4], n=ns2[1:10^4], t=rep("Regression", 10^4))
+df3 <- rbind(df1, df2)
+```
+
+Computation time: 67s (surrogate), 1017s [17 mins] (regression).
+
+```{r, include=T}
+ggplot(df3[df3$t == "Surrogate",], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+
+ggplot(df3[df3$t == "Regression",], aes(x1, x2, colour=n)) + geom_point(alpha=0.3) +
+  theme_minimal() +
+  scale_color_viridis_c()
+```
 
 ## Old
 

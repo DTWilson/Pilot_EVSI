@@ -44,9 +44,17 @@
 
 \section{Introduction}
 
-One approach to choosing the sample size of a clinical trial is through Bayesian decision theory. Given an appropriate utility function, we can choose the same size which maximises the expected utility with respect to a prior distribution on all unknown parameters. These parameters will generally include a treatment effect and one or more so-called nuisance parameters. For example, the standard deviation of a normally distributed outcome. The more that is known about these parameters prior to designing the trial, the more able we will be to make good design decisions.
+- Large, definitive trials are typically designed according to frequentist OCs, which are conditional on unknown parameters
+- Pilot trials are used to get parameter estimates, but are not always feasible, e.g. will never get a precise ICC estimate so will always be uncertain
+- Bayesian design approaches have been proposed to allow for parameter uncertainty to be dealt with properly
+- One specific Bayesian approach is to define a utility function and design to maximise expected utility
+- When using this approach, we may still want to use a pilot to get information and revise our prior to a posterior; extends naturally to looking at efficacy as well as nuisance params
+- There is a balance between the cost of the pilot and the value of the information it will produce
+- The BSDT approach deals with this automatically, we design the pilot to maximise EVSI
+- But, estimating and maximising EVSI is computationally challenging in all but a handful of scenarios
+- Here, we discuss some existing approaches to EVSI and how they could be applied to the pilot design problem, propose a new approach, and compare their performance when applied to a number of illustrative examples
 
-When there is substantial uncertainty regarding the parameters prior to the planned definitive trial, a small pilot trial can be run to obtain some relevant information. Many methods have been proposed to design these pilot trials and to guide how their data should be used to inform the definitive trial, when the goal is to estimate a nuisance parameter.
+When there is substantial uncertainty regarding the parameters prior to the planned definitive trial, a small pilot trial can be run to obtain some relevant information. Many methods have been proposed to design these pilot trials and to guide how their data should be used to inform the definitive trial, when the goal is to estimate a nuisance parameter. In some situations, this approach has been shown to be inappropriate. For example, using a pilot to estimate an ICC, it has been shown that for the estimate to be sufficiently precise the pilot will need the same kind of sample size as the definitive.
 \cite{Teare2014}
 \cite{Julious2006}
 \cite{Whitehead2015}
@@ -56,15 +64,6 @@ When there is substantial uncertainty regarding the parameters prior to the plan
 \cite{Proschan2005}
 \cite{Schie2014}
 \cite{Wittes1990}
-
-Pilot trials have also been used to learn about the effectiveness of the intervention. This use of pilot trials is more controversial, due to the possible issues arising from the small sample size and potential bias in pilot estimates. In particular, conducting a test of effectiveness using pilot data has been advised against as such tests will generally have low power. However, an analysis of a Bayesian decision-theoretic approach to setting the parameters of such tests has suggested that they can be useful, and that not testing will rarely be optimal.
-\cite{Cocks2013}
-\cite{Lee2012}
-\cite{Sim2019}
-\cite{Lancaster2004}
-\cite{Arain2010}
-\cite{Thabane2010}
-\cite{Stallard2012}
 
 Given the small sample size of pilot trials and the subsequent inability to make any firm conclusions or provide very precise parameter estimates under a frequentist model, a Bayesian approach to their design and analysis is attractive. Given appropriate prior distributions describing initial knowledge and uncertainty in any unknown parameters, the pilot data can be used to update these and provide posterior distributions, which can in turn be used to determine the optimal design of the definitive trial (including the decision of whether or not to run the trial at all) under a Bayesian statistical decision framework (which requires the specification of a utility function). The pilot trial itself can then be designed so as to maximise the expected utility of the pilot-definitive trial programme. This is also known as maximising the expected value of sample information.
 \cite{Lindley1957}
@@ -76,7 +75,16 @@ Given the small sample size of pilot trials and the subsequent inability to make
 \cite{Turner2004}
 \cite{Spiegelhalter2001}
 
-A practical consideration when taking this approach is the computational challenge it presents. Other than in very special cases involving conjugate priors, simulation-based methods are generally required. A common approach involves a two-level nested MC routine, where pilot data are simulated and for each data set, a set of posterior samples is generated using e.g. MCMC and this is then used to find the optimal terminal decision (in our case, the optimal definitive trial design). As this can take weeks to run, several researchers have developed fast approximations, generally based on using some kind of regression to approximate the expected utility, conditional on the pilot data sufficient statistics, of each decision. This approach may prove difficult if we have a large space of decisions (e.g. a large potential definitive trial sample size) or a continuous one (e.g. the alpha of the definitive trial). We could discretise the space, to get the speed but at the cost of accuracy.
+This approach would naturally cover all unknown parameters, including the treatment effect. This would be an improvement on current practice, where pilots are not generally used to estimate efficacy due to concerns about low power. 
+\cite{Cocks2013}
+\cite{Lee2012}
+\cite{Sim2019}
+\cite{Lancaster2004}
+\cite{Arain2010}
+\cite{Thabane2010}
+\cite{Stallard2012}
+
+A practical consideration when taking this approach is the computational challenge it presents. Other than in very special cases involving conjugate priors, simulation-based methods are generally required. A simple approach involves a two-level nested MC routine, where pilot data are simulated and for each data set, a set of posterior samples is generated using e.g. MCMC and this is then used to find the optimal terminal decision (in our case, the optimal definitive trial design). As this can take weeks to run, several researchers have developed fast approximations, generally based on using some kind of regression to approximate the expected utility, conditional on the pilot data sufficient statistics, of each decision. This approach may prove difficult if we have a large space of decisions (e.g. a large potential definitive trial sample size) or a continuous one (e.g. the alpha of the definitive trial). We could discretise the space, to get the speed but at the cost of accuracy.
 \cite{Strong2014}
 \cite{Strong2015}
 \cite{Menzies2015}
@@ -161,6 +169,10 @@ for all $d$. So, we can recast the problem as one of finding the optimal decisio
 \end{align}
 where $\theta^{(i)}, x^{(i)} \sim p(\theta, x)$. As noted in Section \ref{sec:problem}, we are considering problems where we have a power function for the definitive trial and as such the expectation in th summation can be calculated quickly and exactly. This avoids the computationally intensive nested Monte Carlo of algorithm \ref{alg:nested_MC}, at the expense of requiring equation (\ref{eqn:surr}) to be calculated repeatedly in the context of a search over a space of decision rules.
 
+Note - maximising the MC approximation would be achieved by taking each term in the summation and finding the n2 which is optimal for that theta. We could construct a generalised rule d from this by just defining the obvious piecewise constant function. But while this rule will maximise the approximation, it won't maximise the actual expectation - it is a case of massively overfitting the rule to the MC data. This doesn't happen in our spline formulation, but only by accident - the smoothness of the splines avoids this. Recall that when we allow for two many knots in the splines, we find optimal rules which are very wriggly.
+
+So, we need to be more precise in the above. Need to show that maximising the MC approximation is not actually what we want to do. And we need at least a way to identify overfitting - this could just be simulating another set of parameters and data, applying the rule, and then revisiting if there is a drop in expected utility (beyond the MC error). 
+
 \subsubsection{Splines}
 
 We consider decision rules defined over a space of cubic spline functions. Considering first the case where the pilot data can be summarised by a scalar sufficient statistic, we set the spline knots at even quantiles of the samples $x_1^{(1)}, \ldots , x_1^{(N)}$ (with the number of knots to be chosen). Given these pre-specified knots, we can obtain the the set of $k + 4$ cubic splines which serve as a basis for the space of all cubic splines defined over the same knots. Denoting these so-called b-splines by $\phi_i(x_1), k=1,\ldots,k+4$, a decision rule is then
@@ -225,6 +237,8 @@ Do this for $10^4, 10^5$ and $10^6$ samples.
 
 \subsection{Binary endpoint}
 
+% Move this to discussion, noting that we could potentially deal with binary and other kinds of outcomes by appealing to the CLT and thereby having the same normal power function - then can use the methods dire3ctly, including the gradients. Alternatively, could calculate power exactly. Also of interest to note that the nested MC method is much more tractable here, as we just have to do MCMC on the unique outcome in the outer sample of pilot data.
+
 Parametrised with a beta prior on the control arm probability, and a normal prior on the log odds ratio. Utility is based on the absolute difference between control and intervention. Sufficient statistics are counts in each arm. 
 
 Although we do require MCMC here since the implied prior on the intervention rate is not conjugate, the computational burden is much less and scales well with the number of outer samples. This is because the possible outcomes of the pilot are finite due to the binary outcome - $n_1^2$ at most. And generally much less - we can simulate the $N$ pilot data first and then just extract the unique outcomes. For example, taking $n_1 = 100$ and $N = 10^6$ led to only 2250 unique outcomes. So, we can do MCMC and optimisation for these, and then use these repeatedly over the full $N$ sample.
@@ -262,7 +276,11 @@ Should just be a computational issue, as it will double the solution space when 
 
 \subsection{Internal pilots}
 
-Main thing is to control the overall type I error. Can't do this analytically, but for any decision rule we can use a sample under the null to estimate alpha and use this as a constraint in our optimisation. Will need to optimise over the main trial critical value here, so follows on from the above.
+Main thing is to control the overall type I error. Can't do this analytically, but for any decision rule we can use a sample under the null to estimate alpha and use this as a constraint in our optimisation. Will need to optimise over the main trial critical value here, so follows on from the above - but note that we don't have to find an optimal decision rule for alpha. Rather, we just need to search over the definitive nominal alpha, and penalise if the actual alpha exceeds the threshold.
+
+We can go beyond a single interim analysis. Suppose we have k interim analyses, at each stage deciding the sample size of the next stage. At the final stage, the chosen sample size will be recruited and the full sample will be used in a frequentist test, and we can control the actual type I error as above. Thus, we need to find k decision rules rather than just one. 
+
+What about a more flexible sequential design? The standard approach finds efficacy and futility bounds at each sampling stage. We could do standard forward sampling here to find these bounds, for given stages. But, we could allow not just stopping, but choice of next stage sample size. This would need some kind of ineterim analysis penalty. Could link this to time - doing an interim will stop recruitment for the length of the endpoint. Would then need to tradeoff effect obtained by time we obtain it, so for our utility we would need linear value in time and preference independence - seems reasonable. And this would correspond with a fixed additive penalty for each analysis. In the simplest case of known variance, we would then want to find a smooth surface over sample mean and sample size giving the next stage sample size, together with two functions representing efficacy and futility stopping boundaries (mapping sample size to sample mean in each case).
 
 
 
@@ -274,6 +292,7 @@ Form of utility very flexible.
 
 Our method involves, at each iteration, calculating the utility of a definitive trial from a set of $\theta, n_2$ pairs. The $\theta$s are the same each time, but the $n_2$'s vary. For us, this is not a problem as the utility calculation is simple; but for complex health economic models it may be computationally demanding. The HE literature often talks about generating one PSA sample and not requiring any more - our method has this property, but may limit it since here we have a large set of decisions, not just 2 or three. Perhaps a key distinction between this and the HE context - utilities generally quite simple? But need to show that in this simple setting, the HE methods are not (uniformly) better than the proposal. Note that \cite{Heath2017} notes that \cite{Strong2015} will tend to be better for low dimensional summary stats, so we can assume this is the competitor for our problem.
 
+Forward sampling - if we had a sequential analysis with a fixed sample size at each stage, the decisons are futile/continue/effective and our approach would reduce to the formaward sampling method in \cite{Carlin1998}. Note though that they search over decision boundaries for each stage, whereas our approach would define continuous stopping boundaries rather than discrete. This might be more helpful if the stage sample size is variable? Also note that the problems could well coincide exactly if we define the splines to be piecewise constant, i.e. of degree 0 rather than 3.
 
 
 \ldots
@@ -294,5 +313,60 @@ This work was supported by the Medical Research Council [grant number MR/N015444
 \bibliography{C:/Users/meddwilb/Documents/Literature/Databases/DTWrefs}
 
 \section*{Appendix}
+
+\subsection*{Derivatives}
+
+Take each element of the sum as a function of coefficient $a$, with fixed $x_1 = x_1^{(i)}$. Then,
+\begin{align*}
+f(a) 	&= g(a)u_1(a) + (1 - g(a))u_2(a) \\
+f'(a) 	&= g'(a)u_1(a) + g(a)u_1'(a) + u_2'(a) - g'(a)u_2(a) + g(a)u_2'(a) \\
+		&= g'(a)(u_1(a) - u_2(a)) + g(a)(u_1'(a) - u_2'(a)) + u_2'(a)\\
+		&= g'(n(a))n'(a)(u_1(a) - u_2(a)) + g(a)(u_1'(n(a))n'(a) - u_2'(n(a))n'(a)) + u_2'(n(a))n'(a)\\
+		&= n'(a) [ g'(n(a))(u_1(a) - u_2(a)) + g(a)(u_1'(n(a)) - u_2'(n(a))) + u_2'(n(a)) ]
+\end{align*}
+
+In our case,
+\begin{align*}
+g(a) 		&= 1 - \Phi \left(z - \frac{\mu}{\sqrt{2\sigma^2/n}} \right)\\
+g'(n(a)) 	&= - \phi \left(z - \frac{\mu}{\sqrt{2\sigma^2/n}} \right)\frac{-\mu}{2\sqrt{2n\sigma^2}},
+\end{align*}
+
+\begin{align*}
+u_1(a)		&= 1 - e^{-\rho(k_d\mu + k_n(n_p + n)} \\
+u_1'(n(a)) 	&= \rho k_n e^{\rho(k_d\mu + k_n(n_p + n)},
+\end{align*}
+
+\begin{align*}
+u_2(a)		&= 1 - e^{-\rho(k_n(n_p + n) + k_c} \\
+u_2'(n(a)) 	&= \rho k_n e^{\rho(k_n(n_p + n) + k_c},
+\end{align*}
+and
+\begin{align*}
+n(a_j) 	&= \sum_{i=1}^{k+4} a_i \phi_i(x_1) \\
+n'(a_j)	&= \phi_j(x_1)
+\end{align*}
+(drop $x_1$ to leave just $\phi_j$?)
+
+With respect to coefficient $b$, defining the decision rule for $z$, we have
+\begin{align*}
+g'(a)		&= z'(a) [ g'(z(a))(u_1(a) - u_2(a)) + g(a)(u_1'(z(a)) - u_2'(z(a))) + u_2'(z(a)) ] \\
+g'(z(a)) 	&= -\phi(z(a) - \frac{\mu}{\sqrt{2\sigma^2/n}},
+\end{align*}
+
+\begin{equation*}
+u_1'(z(a)) 	= u_2'(z(a)) = 0,
+\end{equation*}
+
+and
+\begin{align*}
+z(a_j) 		&= \sum_{i=k+5}^{2(k+4)} a_j\phi_j(x_1) \\
+z'(a_j)) 	&= \phi_j(x_1)
+\end{align*}
+
+So the vector the partial derivative is
+\begin{align*}
+h'(a_j) &= ... for j \leq k+4 \\
+		&= ... for j \geq k+5
+\end{align*}
 
 \end{document}
