@@ -1506,20 +1506,19 @@ np <- 30
 ```
 
 ```{r}
+# Number of MC samples in outer loop
 M <- 10^5
+# Simulate mean difference from prior
 thetas <- rnorm(M, mu_0, sd_0)
+# Simulate pilot data, conditional on theta
 xs <- rnorm(M, thetas, sqrt(2*sig^2/np))
 ```
 
 ```{r}
-get_u_cond <- function(thetas, ns, qs, np, k, rho, sig)
+get_u_cond <- function(thetas, ns, cs, np, k, rho, sig)
 {
-  # Expected utility of main trial - note we have assumed rho > 0
-  
-  #ns <- ns + (ns < 0)*(-ns + 1)
-  
   # Get power
-  pows <- 1-pnorm(qs - thetas/sqrt(2*sig^2/ns))
+  pows <- 1-pnorm(cs - thetas/sqrt(2*sig^2/ns))
   
   utils <- pows*(1-exp(-rho*(k[1]*thetas + k[2]*(ns+np)))) +
     (1-pows)*(1-exp(-rho*(k[2]*(ns+np) + k[3])))
@@ -1531,29 +1530,23 @@ get_u_cond <- function(thetas, ns, qs, np, k, rho, sig)
 ```{r}
 # Set up basis functions
 knots <- seq(quantile(xs, c(0.01, 0.99))[1], quantile(xs, c(0.01, 0.99))[2], l = 10)
-bsMat <- bSpline(xs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
-msMat <- mSpline(xs, knots = knots, degree = 3, intercept = T) # using degree = 3 for cubic splines
+bsMat <- bSpline(xs, knots = knots, degree = 3, intercept = T) # critical value basis
+msMat <- mSpline(xs, knots = knots, degree = 3, intercept = T) # sample size basis
 
 get_u_mc <- function(z, thetas, bsMat, msMat, xs, np, k, rho, sig)
 {
   y <- ncol(bsMat)
+  
   # Get sample sizes from decision rule
   ns <- msMat %*% z[1:y]
-  #ns <- ifelse(ns > 0, ns, 0.0001)
+
   # Get critical values from decision rule
-  qs <- bsMat %*% z[(y+1):(2*y)]
+  cs <- bsMat %*% z[(y+1):(2*y)]
   
-  # Penalty for negative sample size
-  #pen <- -sum(ns[ns < 1])*100000
-  
-  # Using the thetas associated with the x_1s and thus n_2s, average the conditional 
+  # Using the thetas associated with the xs, ns and qs, average the conditional 
   # expected utilities
-  #u <- pen
-  #if(!(pen > 0))u <- -mean(get_u_cond(thetas, ns, qs, np, k, rho, sig))
-  #u
-  
-  u <- -mean(get_u_cond(thetas, ns, qs, np, k, rho, sig))
-  u #+ pen
+  u <- -mean(get_u_cond(thetas, ns, cs, np, k, rho, sig))
+  u
 }
 ```
 
@@ -1563,13 +1556,11 @@ get_grads_mc <- function(z, thetas, bsMat, msMat, xs, np, k, rho, sig)
 {
   y <- ncol(bsMat)
   ns <- msMat %*% z[1:y]
-  qs <- bsMat %*% z[(y+1):(2*y)]
-  
-  #ns <- ns + (ns < 0)*(-ns + 1)
+  cs <- bsMat %*% z[(y+1):(2*y)]
   
   # Get derivative with respect to n
-  f <- 1-pnorm(qs - thetas/sqrt(2*sig^2/ns))
-  fd <- -dnorm(qs - thetas/sqrt(2*sig^2/ns))*(-thetas/(2*sqrt(2*ns*sig^2)))
+  f <- 1-pnorm(cs - thetas/sqrt(2*sig^2/ns))
+  fd <- -dnorm(cs - thetas/sqrt(2*sig^2/ns))*(-thetas/(2*sqrt(2*ns*sig^2)))
   g1 <- 1 - exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
   g1d <- rho*k[2]*exp(-rho*(k[1]*thetas + k[2]*(np + ns)))
   g2 <- 1 - exp(-rho*(k[2]*(np + ns) + k[3]))
@@ -1578,7 +1569,7 @@ get_grads_mc <- function(z, thetas, bsMat, msMat, xs, np, k, rho, sig)
   dfdn <- fd*(g1 - g2) + f*(g1d - g2d) + g2d
   
   # Get derivative with respect to q (= qnorm(1 - alpha))
-  fdq <- -dnorm(qs - thetas/sqrt(2*sig^2/ns))
+  fdq <- -dnorm(cs - thetas/sqrt(2*sig^2/ns))
   
   dfdq <- fdq*(g1 - g2)
   
@@ -1593,6 +1584,7 @@ grad(get_u_mc, z, thetas=thetas, bsMat=bsMat, msMat=msMat, np=np, k=k, rho=rho, 
 ```
 
 ```{r}
+# Set initial point for search
 z <- rep(1,ncol(bsMat)*2)
 ptm <- proc.time()
 opt4 <- optimx(z, get_u_mc, get_grads_mc, 
@@ -1602,20 +1594,27 @@ opt4 <- optimx(z, get_u_mc, get_grads_mc,
               thetas=thetas, bsMat=bsMat, msMat=msMat, np=np, k=k, rho=rho, sig=sig)
 z <- as.numeric(opt4[1:(2*ncol(bsMat))])
 proc.time() - ptm
+```
 
+```{r}
 y <- ncol(bsMat)
+# Extract the predicted ns and critical values
 ns <- msMat %*% z[1:y]
-qs <- bsMat %*% z[(y+1):(2*y)]
+cs <- bsMat %*% z[(y+1):(2*y)]
 
-df <- data.frame(n=ns, q=qs, x=xs)
-df$a <- 1-pnorm(df$q)
-
-ggplot(df[1:10^3,], aes(x, n, colour=a)) + geom_point()
-ggplot(df[1:10^3,], aes(x, q, colour=n)) + geom_point()
-
-us1 <- get_u_cond(thetas, ns, qs, np, k, rho, sig)
+# Calculate conditional utilities and their mean
+us1 <- get_u_cond(thetas, ns, cs, np, k, rho, sig)
 mean(us1)
-(log(1-mean(us1) +2*sqrt(var(us1)/length(us1))) - log(1-mean(us1)))/(rho*k[2])
+
+df <- data.frame(n=ns, c=cs, x=xs)
+df$a <- 1-pnorm(df$c)
+df$m <- "S"
+
+df <- df[1:10^3,]
+
+# Plot decision rules
+ggplot(df, aes(x, n, colour=a)) + geom_point()
+ggplot(df, aes(x, c, colour=n)) + geom_point()
 ```
 
 
@@ -1624,9 +1623,9 @@ mean(us1)
 ```{r}
 exp_u <- function(x, np, k, rho, m, s, sig)
 {
-  n <- x[1]; q <- x[2]
+  n <- x[1]; c <- x[2]
   
-  d <- q*sqrt(2*sig*sig/n)
+  d <- c*sqrt(2*sig*sig/n)
   k_d <- k[1]; k_n <- k[2]; k_c <- k[3]
   
   sd_1 <- sqrt(1/(1/s^2 + n/(2*sig^2)))
@@ -1648,23 +1647,31 @@ var_1 <- 1/( 1/(sd_0^2) + np/(2*sig^2) )
 pms <- var_1*(mu_0/(sd_0^2) + np*xs/(2*sig^2))
 
 ptm <- proc.time()
-ns2 <- NULL; ds2 <- NULL; us2 <- NULL
+ns2 <- NULL; cs2 <- NULL; us2 <- NULL
+# For the first so many posteriors, numerically search for the optimal sample size and critical value
 for(m in pms[1:10000]){
   suppressWarnings( opt <- optim(c(50,1.95), exp_u, np=np, k=k, rho=rho, m=m, s=sqrt(var_1), sig=sig, #method="L-BFGS-B",
              lower=c(0.001, -15), upper=c(600, 15)) )
-  ns2 <- c(ns2, opt$par[1]); ds2 <- c(ds2, opt$par[2]); us2 <- c(us2, -opt$value)
+  ns2 <- c(ns2, opt$par[1]); cs2 <- c(cs2, opt$par[2]); us2 <- c(us2, -opt$value)
 }
 proc.time() - ptm
 ```
 
 
 ```{r}
-us <- get_u_cond(thetas, ns, qs, np, k, rho, sig); us2 <- get_u_cond(thetas, ns2, ds2, np, k, rho, sig)
-mean(us); mean(us2); 
-(log(1-mean(us)) - log(1-mean(us2)))/(rho*k[2])
+# Calculate expected utility and compare with the previous result
+us2 <- get_u_cond(thetas, ns2, cs2, np, k, rho, sig)
+mean(us1); mean(us2); 
+(log(1-mean(us1)) - log(1-mean(us2)))/(rho*k[2])
 
-plot(xs[1:10^3], ns[1:10^3],)
-points(xs[1:10^3], ns2[1:10^3], col="red")
+df2 <- data.frame(n = ns2, c = cs2, x = xs)
+df2$a <- 1 - pnorm(df2$c)
+df2$m <- "A"
+
+df <- rbind(df, df2[1:10^3,])
+
+ggplot(df, aes(x, n, colour=m)) + geom_point()
+ggplot(df, aes(x, c, colour=m)) + geom_point()
 ```
 
 
@@ -1674,33 +1681,41 @@ points(xs[1:10^3], ns2[1:10^3], col="red")
 ptm <- proc.time()
 
 # list the decisions to be cycled through
-zs <- expand.grid(n = seq(0,200,1), q = seq(-10,10,1))
+zs <- expand.grid(n = seq(0,200,10), c = seq(-10,10,1))
 preds <- NULL
 for(i in 1:nrow(zs)){
   #print(zs[i,])
   # For each decision, get the utilities
-  us <- get_u_cond(thetas, ns=zs[i,1], qs=zs[i,2], np, k, rho, sig)
-  df <- data.frame(x=xs, u=us)
+  us <- get_u_cond(thetas, ns=zs[i,1], cs=zs[i,2], np, k, rho, sig)
+  df3 <- data.frame(x=xs, u=us)
 
   # Fit the NP regression model
-  fit <- gam(u ~ s(x), data=df)
+  fit <- gam(u ~ s(x), data=df3)
   # Get a vector of predictions from the model and add to a matrix
-  preds <- cbind(preds, predict(fit, newdata=df[,1,drop=F]))
+  preds <- cbind(preds, predict(fit, newdata=df3[,1,drop=F]))
 }
 
 # For each simulated instance, choose the n which gives largest expected utility
 zs3 <- zs[apply(preds, 1, which.max),]
-
 proc.time() - ptm
+
+ns3 <- zs3[,1]
+cs3 <- zs3[,2]
 ```
 
 ```{r}
-us3 <- get_u_cond(thetas, zs3[,1], zs3[,2], np, k, rho, sig)
+us3 <- get_u_cond(thetas, ns3, cs3, np, k, rho, sig)
 mean(us1); mean(us3); 
 (log(1-mean(us1)) - log(1-mean(us3)))/(rho*k[2])
 
-plot(xs[1:1000], zs3[1:1000,1])
-#df3 <- rbind(df2, data.frame(x=xs[1:10^3], n=ns3[1:10^3], t=rep("Regression", 10^3)))
+df3 <- data.frame(n = ns3, c = cs3, x = xs)
+df3$a <- 1 - pnorm(df3$c)
+df3$m <- "R"
+
+df <- rbind(df, df3[1:10^3,])
+
+ggplot(df, aes(x, n, colour=m)) + geom_point()
+ggplot(df, aes(x, c, colour=m)) + geom_point()
 ```
 
 ## Example 7
